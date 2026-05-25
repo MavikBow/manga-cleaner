@@ -52,7 +52,7 @@ class MangaCanvas(QGraphicsView):
         self.tool_state_updated.emit(self.is_eraser)
 
     def update_cursor_visuals(self):
-        if self.is_eraser:
+        if self.is_eraser or self.current_tool == "ERASER":
             self.cursor_item.setPen(QPen(QColor(0, 212, 255, 200), 1))
             self.cursor_item.setBrush(QBrush(QColor(0, 212, 255, 60)))
         else:
@@ -97,7 +97,7 @@ class MangaCanvas(QGraphicsView):
         curr_pt = self.mapToScene(event.pos())
         self.cursor_item.setPos(curr_pt)
         if self.is_drawing:
-            if self.current_tool == "BRUSH":
+            if self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser:
                 self.paint_mask_stroke(self.last_pt, curr_pt)
                 self.last_pt = curr_pt
             elif self.current_tool == "RECT":
@@ -119,15 +119,17 @@ class MangaCanvas(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def get_painter(self):
-        p = QPainter(self.mask)
-        p.setRenderHint(QPainter.Antialiasing)
-        if self.is_eraser:
-            p.setCompositionMode(QPainter.CompositionMode_Clear)
+        painter = QPainter(self.mask)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        if self.current_tool == "ERASER" or self.is_eraser:
+            painter.setCompositionMode(QPainter.CompositionMode_Clear)
             color = Qt.transparent
         else:
-            p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
             color = QColor(255, 0, 0, 160)
-        return p, color
+            
+        return painter, color
 
     def paint_mask_stroke(self, p1, p2):
         painter, color = self.get_painter()

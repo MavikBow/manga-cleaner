@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self.batch_engine = BatchEngine()
         self.worker_thread = None
         self.is_batching = False
+        self.is_currently_erasing = False
         
         self.init_ui()
         self.setup_shortcuts()
@@ -57,7 +58,7 @@ class MainWindow(QMainWindow):
         self.nav.setFixedHeight(60)
         nav_lay = QHBoxLayout(self.nav)
         
-        title = QLabel(Config.APP_NAME.upper())
+        title = QLabel(f"{Config.APP_NAME.upper()} {Config.VERSION}")
         title.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold; font-size: 18px;")
         
         self.hw_mon = HardwareMonitor()
@@ -118,9 +119,10 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold; font-size: 10px;")
         rp_lay.addWidget(self.mode_lbl)
         
-        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "RECT", "LASSO", "CLEAR"])
+        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "CLEAR"])
         self.tools.buttons["MOVE"].clicked.connect(lambda: self.set_tool("NONE"))
         self.tools.buttons["BRUSH"].clicked.connect(lambda: self.set_tool("BRUSH"))
+        self.tools.buttons["ERASER"].clicked.connect(lambda: self.set_tool("ERASER"))
         self.tools.buttons["RECT"].clicked.connect(lambda: self.set_tool("RECT"))
         self.tools.buttons["LASSO"].clicked.connect(lambda: self.set_tool("LASSO"))
         self.tools.buttons["CLEAR"].clicked.connect(self.canvas.clear_mask)
@@ -176,26 +178,42 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def on_eraser_toggle_ui(self, is_eraser):
+        self.is_currently_erasing = is_eraser
+        
         if is_eraser:
-            self.mode_lbl.setText("MODE: ERASING")
-            self.mode_lbl.setStyleSheet("color: #00d4ff; font-weight: bold;")
+            self.set_tool("ERASER")
         else:
-            self.mode_lbl.setText("MODE: PAINTING")
-            self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
+            self.set_tool("BRUSH")
 
     def set_tool(self, tool):
+        if tool not in ["NONE", "ERASER"] and getattr(self, 'is_currently_erasing', False):
+            self.canvas.toggle_eraser()
+        
         self.canvas.current_tool = tool
-        for btn in self.tools.buttons.values(): btn.setChecked(False)
+        for btn in self.tools.buttons.values(): 
+            btn.setChecked(False)
         
         if tool == "NONE":
             self.canvas.setDragMode(QGraphicsView.ScrollHandDrag)
             self.canvas.cursor_item.hide()
             self.tools.buttons["MOVE"].setChecked(True)
+            self.mode_lbl.setText("MODE: MOVING")
+            self.mode_lbl.setStyleSheet("color: #888888; font-weight: bold;")
+            
         else:
             self.canvas.setDragMode(QGraphicsView.NoDrag)
             self.canvas.cursor_item.show()
-            mapping = {"BRUSH":"BRUSH", "RECT":"RECT", "LASSO":"LASSO"}
-            if tool in mapping: self.tools.buttons[mapping[tool]].setChecked(True)
+            
+            mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO"}
+            if tool in mapping: 
+                self.tools.buttons[mapping[tool]].setChecked(True)
+            
+            if tool == "ERASER":
+                self.mode_lbl.setText("MODE: ERASING")
+                self.mode_lbl.setStyleSheet("color: #00d4ff; font-weight: bold;")
+            else:
+                self.mode_lbl.setText("MODE: PAINTING")
+                self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
 
     #/////////////////////////////////#
     #      HISTORY OPERATIONS         #
@@ -265,6 +283,7 @@ class MainWindow(QMainWindow):
         ptr = self.canvas.mask.bits()
         mask_np = np.frombuffer(ptr, np.uint8).reshape((self.canvas.mask.height(), self.canvas.mask.width(), 4))
         mask_gray = mask_np[:, :, 3].copy()
+        
         t_size = self.t_slider.slider.value() * 512
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
@@ -313,7 +332,7 @@ class MainWindow(QMainWindow):
     def step_batch(self):
         path = self.batch_engine.get_next()
         if path:
-            img = cv2.imread(path)
+            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
             self.canvas.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             self.on_auto_scan()
 
@@ -342,15 +361,26 @@ class MainWindow(QMainWindow):
                     self.file_list.add_file(os.path.join(p, f))
 
     def on_file_clicked(self, it):
-        img = cv2.imread(it.data(Qt.UserRole))
+        path_real = it.data(Qt.UserRole)
+        img_data = np.fromfile(path_real, dtype=np.uint8)
+        img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+
         if img is not None:
             self.history = HistoryManager(Config.MAX_HISTORY)
             self.canvas.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        else:
+            QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
+            logger.error(f"Failed to decode image: {path_real}")
 
     def on_export(self, fmt):
         if self.canvas.cv_img is None: return
         path, _ = QFileDialog.getSaveFileName(self, "Export", "", f"{fmt.upper()} (*.{fmt})")
-        if path: cv2.imwrite(path, cv2.cvtColor(self.canvas.cv_img, cv2.COLOR_RGB2BGR))
+        if path:
+            img_bgr = cv2.cvtColor(self.canvas.cv_img, cv2.COLOR_RGB2BGR)
+            ext = os.path.splitext(path)[1]
+            is_success, im_buf_arr = cv2.imencode(ext, img_bgr)
+            if is_success:
+                im_buf_arr.tofile(path)
 
     def on_photoshop_bridge(self):
         if self.canvas.cv_img is None: return
