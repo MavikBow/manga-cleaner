@@ -36,20 +36,31 @@ def main():
     
     # 3. Initialize App
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 9))
     app.setApplicationName(Config.APP_NAME)
     
     logger.info(f"--- {Config.APP_NAME.upper()} STARTUP ---")
 
     # 4. Inject Theme Styles
-    qss_path = os.path.join("src", "frontend", "styles.qss")
+    # PyInstaller hides bundled files in an internal folder. sys._MEIPASS safely locates it.
+    if getattr(sys, 'frozen', False):
+        bundle_dir = sys._MEIPASS
+    else:
+        bundle_dir = Paths.BASE_DIR
+
+    qss_path = os.path.join(bundle_dir, "src", "frontend", "styles.qss")
+
     if os.path.exists(qss_path):
         try:
             with open(qss_path, "r") as f:
                 app.setStyleSheet(f.read())
+            logger.info("[+] Stylesheet loaded successfully.")
         except Exception as e:
             logger.error(f"Styles Load Failed: {e}")
-    
+    else:
+        logger.warning(f"Stylesheet missing at: {qss_path}")    
+
     # 5. Launch Main Studio
     try:
         window = MainWindow()
