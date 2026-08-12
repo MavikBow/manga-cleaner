@@ -11,7 +11,18 @@ class AIWorker(QObject):
     progress = Signal(int)
     error = Signal(str)
 
-    @Slot(object, str)
+    def __init__(self, task=None, args=None):
+        super().__init__()
+        self.task = task
+        self.args = args
+
+    @Slot()
+    def process(self):
+        if self.task == "ocr":
+            self.run_ocr(self.args[0], "ENG")
+        elif self.task == "clean":
+            self.run_clean(self.args[0], self.args[1], self.args[2])
+
     def run_ocr(self, cv_img, language):
         try:
             mask = ImageProcessor.run_ocr_logic(cv_img, language)
@@ -19,7 +30,6 @@ class AIWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
 
-    @Slot(object, object, int)
     def run_clean(self, cv_img, mask_img, max_tile_w):
         try:
             result, patches = ImageProcessor.run_clean_logic(
