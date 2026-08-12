@@ -250,10 +250,12 @@ class MainWindow(QMainWindow):
     #/////////////////////////////////#
 
     def on_task_finished(self, result, patches):
-        if patches: 
-            for x, y, p in patches: self.history.push_image_action(x, y, p)
-            self.canvas.set_image(result)
-            self.canvas.clear_mask()
+        # Explicitly check for 'not None' because empty list [] means Clean Task with nothing highlighted
+        if patches is not None:
+            if len(patches) > 0: # Only update canvas/history if things were actually cleaned
+                for x, y, p in patches: self.history.push_image_action(x, y, p)
+                self.canvas.set_image(result)
+                self.canvas.clear_mask()
             
             if self.is_batching:
                 self.stop_thread()
