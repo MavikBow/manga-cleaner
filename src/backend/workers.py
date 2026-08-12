@@ -3,12 +3,14 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from PySide6.QtCore import QObject, Signal, Slot
 from src.backend.processor import ImageProcessor
+from src.utils.logger import logger
 
 # Keep a single background process alive so models stay in VRAM
 _pool = None
 def get_pool():
     global _pool
     if _pool is None:
+        logger.info("[+] Initializing new ProcessPoolExecutor for background AI tasks.")
         _pool = ProcessPoolExecutor(max_workers=1)
     return _pool
 
@@ -36,6 +38,7 @@ class AIWorker(QObject):
         self.task = task
         self.args = args
         self.manager = multiprocessing.Manager()
+        logger.info(f"[i] AIWorker initialized for task: {self.task}")
 
     @Slot()
     def process(self):
@@ -46,18 +49,22 @@ class AIWorker(QObject):
 
     def run_ocr(self, cv_img, language):
         try:
+            logger.info("[i] Submitting OCR task to background OS process...")
             future = get_pool().submit(_run_ocr_process, cv_img, language)
             
             # Poll the background process without blocking the GUI
             while not future.done():
                 time.sleep(0.05)
                 
+            logger.info("[+] OCR background task completed successfully.")
             self.finished.emit(future.result(), None)
         except Exception as e:
+            logger.error(f"[X] OCR Task crashed in background process: {e}")
             self.error.emit(str(e))
 
     def run_clean(self, cv_img, mask_img, max_tile_w):
         try:
+            logger.info("[i] Submitting LaMa Clean task to background OS process...")
             q = self.manager.Queue()
             future = get_pool().submit(_run_clean_process, cv_img, mask_img, max_tile_w, q)
             
@@ -67,7 +74,9 @@ class AIWorker(QObject):
                     self.progress.emit(q.get())
                 time.sleep(0.05)
                 
+            logger.info("[+] LaMa Clean background task completed successfully.")
             res = future.result()
             self.finished.emit(res[0], res[1])
         except Exception as e:
+            logger.error(f"[X] LaMa Clean Task crashed in background process: {e}")
             self.error.emit(str(e))
