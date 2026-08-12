@@ -1,5 +1,6 @@
 import sys
 import os
+import multiprocessing
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, qInstallMessageHandler
@@ -72,4 +73,5 @@ def main():
         logger.info(f"--- {Config.APP_NAME.upper()} SHUTDOWN ---")
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

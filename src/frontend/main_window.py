@@ -250,10 +250,12 @@ class MainWindow(QMainWindow):
     #/////////////////////////////////#
 
     def on_task_finished(self, result, patches):
-        if patches: 
-            for x, y, p in patches: self.history.push_image_action(x, y, p)
-            self.canvas.set_image(result)
-            self.canvas.clear_mask()
+        # Explicitly check for 'not None' because empty list [] means Clean Task with nothing highlighted
+        if patches is not None:
+            if len(patches) > 0: # Only update canvas/history if things were actually cleaned
+                for x, y, p in patches: self.history.push_image_action(x, y, p)
+                self.canvas.set_image(result)
+                self.canvas.clear_mask()
             
             if self.is_batching:
                 self.stop_thread()
@@ -292,13 +294,14 @@ class MainWindow(QMainWindow):
     def run_thread(self, task, *args):
         self.setCursor(Qt.WaitCursor)
         self.worker_thread = QThread()
-        self.worker = AIWorker()
+        self.worker = AIWorker(task, args)
         self.worker.moveToThread(self.worker_thread)
-        if task == "ocr": self.worker_thread.started.connect(lambda: self.worker.run_ocr(args[0], "ENG"))
-        else: self.worker_thread.started.connect(lambda: self.worker.run_clean(args[0], args[1], args[2]))
+        self.worker_thread.started.connect(self.worker.process)
         self.worker.progress.connect(self.progress_bar.setValue)
         self.worker.finished.connect(self.on_task_finished)
         self.worker.error.connect(self.on_task_error)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.finished.connect(self.worker_thread.deleteLater)
         self.worker_thread.start()
 
     def on_task_error(self, message):
