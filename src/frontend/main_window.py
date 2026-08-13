@@ -3,7 +3,8 @@ import cv2
 import numpy as np
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
-                             QMenu, QMessageBox, QGraphicsView, QProgressBar, QInputDialog)
+                             QMenu, QMessageBox, QGraphicsView, QProgressBar, QInputDialog,
+                             QDialog, QComboBox, QDialogButtonBox, QFormLayout)
 from PySide6.QtGui import QShortcut, QKeySequence, QImage
 from PySide6.QtCore import Qt, QTimer, QThread
 from src.frontend.widgets import FileListWidget, ToolGroup, BrushSlider, HardwareMonitor
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self.is_currently_erasing = False
         self.current_img_path = None
         self.last_scan_type = "ocr"
+        self.batch_scan_type = "ocr"
         
         self.init_ui()
         self.setup_shortcuts()
@@ -134,7 +136,7 @@ class MainWindow(QMainWindow):
         
         btn_scan = QPushButton("OCR SCAN [O]")
         btn_scan.setObjectName("ActionBtn")
-        btn_scan.clicked.connect(self.on_auto_scan)
+        btn_scan.clicked.connect(self.on_ocr_scan)
 
         btn_trans = QPushButton("TRANSPARENCY SCAN [T]")
         btn_trans.setObjectName("ActionBtn")
@@ -171,7 +173,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
         QShortcut(QKeySequence("Space"), self).activated.connect(lambda: self.set_tool("NONE"))
         
-        QShortcut(QKeySequence("O"), self).activated.connect(self.on_auto_scan)
+        QShortcut(QKeySequence("O"), self).activated.connect(self.on_ocr_scan)
         QShortcut(QKeySequence("T"), self).activated.connect(self.on_transparency_scan)
         QShortcut(QKeySequence("C"), self).activated.connect(self.on_lama_clean)
         
@@ -287,7 +289,7 @@ class MainWindow(QMainWindow):
 
         self.stop_thread()
 
-    def on_auto_scan(self):
+    def on_ocr_scan(self):
         if self.canvas.cv_img is None or self.worker_thread: return
         self.last_scan_type = "ocr"
         self.run_thread("ocr", self.canvas.cv_img)
@@ -341,8 +343,14 @@ class MainWindow(QMainWindow):
 
     def on_start_batch(self):
         if self.file_list.count() == 0: return
-        fmt, ok = QInputDialog.getItem(self, "Batch Setup", "Format:", ["jpg", "png", "photoshop"], 0, False)
-        if not ok: return
+
+        dialog = BatchSetupDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        scan_choice, fmt = dialog.get_results()
+        self.batch_scan_type = "transparency" if scan_choice == "Transparency Scan" else "ocr"
+
         paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
         self.batch_engine.initialize_batch(paths, fmt)
         get_pool().submit(_run_flush_process, True).result()
@@ -365,7 +373,10 @@ class MainWindow(QMainWindow):
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     
             self.canvas.set_image(img)
-            self.on_auto_scan()
+            if self.batch_scan_type == "transparency":
+                self.on_transparency_scan()
+            else:
+                self.on_ocr_scan()
 
     def finalize_batch(self):
         self.is_batching = False
@@ -437,3 +448,34 @@ class MainWindow(QMainWindow):
         ram, gpu = self.monitor.get_stats()
         self.hw_mon.lbl.setText(f"{'GPU' if gpu else 'CPU'} | RAM: {ram}MB")
         self.hw_mon.bar.setValue(min(ram // 40, 100))
+
+#/////////////////////////////////#
+#    BATCH SETUP DIALOG MODAL     #
+#/////////////////////////////////#
+
+class BatchSetupDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Batch Setup")
+        self.setStyleSheet(f"background-color: {Config.COLOR_PANEL}; color: {Config.COLOR_TEXT};")
+
+        self.scan_mode = QComboBox()
+        self.scan_mode.addItems(["OCR Scan", "Transparency Scan"])
+        self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
+
+        self.export_fmt = QComboBox()
+        self.export_fmt.addItems(["jpg", "png", "photoshop"])
+        self.export_fmt.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.setStyleSheet(f"QPushButton {{ background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 6px; }}")
+
+        layout = QFormLayout(self)
+        layout.addRow("Auto-Scan Mode:", self.scan_mode)
+        layout.addRow("Export Format:", self.export_fmt)
+        layout.addWidget(buttons)
+
+    def get_results(self):
+        return self.scan_mode.currentText(), self.export_fmt.currentText()
