@@ -21,7 +21,8 @@ class HelpSystem(QDialog):
         tab1.setHtml(
             "<h3>⌨️ Keyboard Shortcuts</h3>"
             "<table border='0' cellpadding='5'>"
-            "<tr><td><b>[D]</b></td><td>Auto-Detect Text Bubbles</td></tr>"
+            "<tr><td><b>[O]</b></td><td>Auto-Detect Text Bubbles (OCR)</td></tr>"
+            "<tr><td><b>[T]</b></td><td>Auto-Detect Transparent Areas</td></tr>"
             "<tr><td><b>[C]</b></td><td>Execute AI Clean (Inpainting)</td></tr>"
             "<tr><td><b>[B] / [R] / [L]</b></td><td>Brush / Rect / Lasso Tools</td></tr>"
             "<tr><td><b>[Shift]</b></td><td><b>Toggle</b> Paint/Erase Mode</td></tr>"

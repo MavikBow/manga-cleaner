@@ -1,4 +1,6 @@
+import cv2
 import time
+import numpy as np
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 from PySide6.QtCore import QObject, Signal, Slot
@@ -52,6 +54,8 @@ class AIWorker(QObject):
             self.run_ocr(self.args[0], "ENG")
         elif self.task == "clean":
             self.run_clean(self.args[0], self.args[1], self.args[2])
+        elif self.task == "transparency":
+            self.run_transparency(self.args[0])
 
     def run_ocr(self, cv_img, language):
         try:
@@ -85,4 +89,22 @@ class AIWorker(QObject):
             self.finished.emit(res[0], res[1])
         except Exception as e:
             logger.error(f"[X] LaMa Clean Task crashed in background process: {e}")
+            self.error.emit(str(e))
+
+    def run_transparency(self, img_path):
+        try:
+            logger.info("[i] Executing Transparency scan in QThread...")
+
+            img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+            if img is not None and len(img.shape) == 3 and img.shape[2] == 4:
+                mask = (img[:, :, 3] == 0).astype(np.uint8) * 255
+            else:
+                h, w = img.shape[:2] if img is not None else (100, 100)
+                mask = np.zeros((h, w), dtype=np.uint8)
+
+            logger.info("[+] Transparency scan completed.")
+            self.finished.emit(mask, None)
+
+        except Exception as e:
+            logger.error(f"[X] Transparency Task crashed: {e}")
             self.error.emit(str(e))

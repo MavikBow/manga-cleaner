@@ -34,6 +34,8 @@ class MainWindow(QMainWindow):
         self.worker_thread = None
         self.is_batching = False
         self.is_currently_erasing = False
+        self.current_img_path = None
+        self.last_scan_type = "ocr"
         
         self.init_ui()
         self.setup_shortcuts()
@@ -130,9 +132,13 @@ class MainWindow(QMainWindow):
         self.b_slider = BrushSlider("BRUSH SIZE", 40, 1, 300, self.canvas.set_brush_size)
         self.t_slider = BrushSlider("MAX TILE SIZE", 2048, 512, 4096, is_tile=True)
         
-        btn_scan = QPushButton("DETECTION SCAN [D]")
+        btn_scan = QPushButton("OCR SCAN [O]")
         btn_scan.setObjectName("ActionBtn")
         btn_scan.clicked.connect(self.on_auto_scan)
+
+        btn_trans = QPushButton("TRANSPARENCY SCAN [T]")
+        btn_trans.setObjectName("ActionBtn")
+        btn_trans.clicked.connect(self.on_transparency_scan)
         
         self.btn_clean = QPushButton("EXECUTE CLEAN [C]")
         self.btn_clean.setObjectName("PrimaryBtn")
@@ -147,6 +153,7 @@ class MainWindow(QMainWindow):
         rp_lay.addWidget(self.b_slider)
         rp_lay.addSpacing(20)
         rp_lay.addWidget(btn_scan)
+        rp_lay.addWidget(btn_trans)
         rp_lay.addWidget(self.t_slider)
         rp_lay.addWidget(self.btn_clean)
         rp_lay.addStretch()
@@ -164,7 +171,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
         QShortcut(QKeySequence("Space"), self).activated.connect(lambda: self.set_tool("NONE"))
         
-        QShortcut(QKeySequence("D"), self).activated.connect(self.on_auto_scan)
+        QShortcut(QKeySequence("O"), self).activated.connect(self.on_auto_scan)
+        QShortcut(QKeySequence("T"), self).activated.connect(self.on_transparency_scan)
         QShortcut(QKeySequence("C"), self).activated.connect(self.on_lama_clean)
         
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.on_undo_image)
@@ -266,7 +274,10 @@ class MainWindow(QMainWindow):
         else: 
             h, w = result.shape[:2]
             rgba = np.zeros((h, w, 4), dtype=np.uint8)
-            rgba[result > 0] = [255, 0, 0, 160] 
+            if getattr(self, "last_scan_type", "ocr") == "transparency":
+                rgba[result > 0] = [0, 255, 0, 160]
+            else:
+                rgba[result > 0] = [255, 0, 0, 160]
             self.canvas.mask = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
             self.canvas.update_mask_display()
             if self.is_batching:
@@ -278,7 +289,13 @@ class MainWindow(QMainWindow):
 
     def on_auto_scan(self):
         if self.canvas.cv_img is None or self.worker_thread: return
+        self.last_scan_type = "ocr"
         self.run_thread("ocr", self.canvas.cv_img)
+
+    def on_transparency_scan(self):
+        if self.canvas.cv_img is None or not self.current_img_path or self.worker_thread: return
+        self.last_scan_type = "transparency"
+        self.run_thread("transparency", self.current_img_path)
 
     def on_lama_clean(self):
         if self.canvas.cv_img is None or self.worker_thread: return
@@ -335,6 +352,7 @@ class MainWindow(QMainWindow):
     def step_batch(self):
         path = self.batch_engine.get_next()
         if path:
+            self.current_img_path = path
             img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
             self.canvas.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             self.on_auto_scan()
@@ -364,6 +382,7 @@ class MainWindow(QMainWindow):
 
     def on_file_clicked(self, it):
         path_real = it.data(Qt.UserRole)
+        self.current_img_path = path_real
         img_data = np.fromfile(path_real, dtype=np.uint8)
         img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
 
