@@ -23,6 +23,12 @@ def _run_clean_process(cv_img, mask_img, max_tile_w, queue):
         queue.put(prog)
     return ImageProcessor.run_clean_logic(cv_img, mask_img, max_tile_w, progress_callback=cb)
 
+def _run_flush_process(persistent):
+    from src.backend.ai_manager import AIManager
+    AIManager.set_persistence(persistent)
+    if not persistent:
+        AIManager.flush()
+    return True
 
 #/////////////////////////////////#
 #     AI ASYNC TASK WORKER        #

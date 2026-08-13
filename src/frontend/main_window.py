@@ -16,7 +16,7 @@ from src.utils.logger import logger
 from src.backend.workers import AIWorker
 from src.backend.photoshop import PhotoshopBridge
 from src.backend.batch_engine import BatchEngine
-from src.backend.ai_manager import AIManager
+from src.backend.workers import AIWorker, get_pool, _run_flush_process
 
 #/////////////////////////////////#
 #     STUDIO MAIN CONTROLLER      #
@@ -307,7 +307,7 @@ class MainWindow(QMainWindow):
     def on_task_error(self, message):
         self.stop_thread()
         self.is_batching = False
-        AIManager.set_persistence(False)
+        get_pool().submit(_run_flush_process, False).result()
         QMessageBox.critical(self, "Hardware Error", message)
 
     def stop_thread(self):
@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
         if not ok: return
         paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
         self.batch_engine.initialize_batch(paths, fmt)
-        AIManager.set_persistence(True)
+        get_pool().submit(_run_flush_process, True).result()
         self.is_batching = True
         self.step_batch()
 
@@ -341,8 +341,7 @@ class MainWindow(QMainWindow):
 
     def finalize_batch(self):
         self.is_batching = False
-        AIManager.set_persistence(False)
-        AIManager.flush()
+        get_pool().submit(_run_flush_process, False).result()
         
         if self.batch_engine.export_format == "photoshop":
             self.setCursor(Qt.WaitCursor)
