@@ -55,6 +55,20 @@ class MangaCanvas(QGraphicsView):
         self.setMouseTracking(True)
         self.update_cursor_visuals()
 
+    def drawBackground(self, painter, rect):
+        painter.save()
+        painter.resetTransform()
+        painter.fillRect(self.viewport().rect(), QColor(11, 11, 14))
+        painter.restore()
+
+        # Draw the non-scaling checkerboard strictly behind the image bounds
+        if self.cv_img is not None:
+            painter.save()
+            painter.setClipRect(self.sceneRect()) # Clip rendering to the image's boundaries
+            painter.resetTransform()              # Strip the zoom/pan scaling from the painter
+            painter.fillRect(self.viewport().rect(), self.backgroundBrush())
+            painter.restore()
+
     def toggle_eraser(self):
         self.is_eraser = not self.is_eraser
         self.update_cursor_visuals()
