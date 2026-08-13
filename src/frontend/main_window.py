@@ -353,8 +353,18 @@ class MainWindow(QMainWindow):
         path = self.batch_engine.get_next()
         if path:
             self.current_img_path = path
-            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
-            self.canvas.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+            # Load with IMREAD_UNCHANGED to preserve Alpha channel
+            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+            if img is not None:
+                if len(img.shape) == 2:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                elif len(img.shape) == 3 and img.shape[2] == 4:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                else:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    
+            self.canvas.set_image(img)
             self.on_auto_scan()
 
     def finalize_batch(self):
@@ -384,11 +394,18 @@ class MainWindow(QMainWindow):
         path_real = it.data(Qt.UserRole)
         self.current_img_path = path_real
         img_data = np.fromfile(path_real, dtype=np.uint8)
-        img = cv2.imdecode(img_data, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
 
         if img is not None:
+            if len(img.shape) == 2:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+            elif len(img.shape) == 3 and img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                
             self.history = HistoryManager(Config.MAX_HISTORY)
-            self.canvas.set_image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            self.canvas.set_image(img)
         else:
             QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
             logger.error(f"Failed to decode image: {path_real}")
@@ -397,9 +414,15 @@ class MainWindow(QMainWindow):
         if self.canvas.cv_img is None: return
         path, _ = QFileDialog.getSaveFileName(self, "Export", "", f"{fmt.upper()} (*.{fmt})")
         if path:
-            img_bgr = cv2.cvtColor(self.canvas.cv_img, cv2.COLOR_RGB2BGR)
+            if len(self.canvas.cv_img.shape) == 3 and self.canvas.cv_img.shape[2] == 4:
+                img_out = cv2.cvtColor(self.canvas.cv_img, cv2.COLOR_RGBA2BGRA)
+                if fmt.lower() in ["jpg", "jpeg"]:
+                    img_out = cv2.cvtColor(img_out, cv2.COLOR_BGRA2BGR)
+            else:
+                img_out = cv2.cvtColor(self.canvas.cv_img, cv2.COLOR_RGB2BGR)
+                
             ext = os.path.splitext(path)[1]
-            is_success, im_buf_arr = cv2.imencode(ext, img_bgr)
+            is_success, im_buf_arr = cv2.imencode(ext, img_out)
             if is_success:
                 im_buf_arr.tofile(path)
 

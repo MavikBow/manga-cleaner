@@ -18,7 +18,16 @@ class MangaCanvas(QGraphicsView):
         
         self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setBackgroundBrush(QBrush(QColor(11, 11, 14)))
+
+        # --- GENERATE CHECKERBOARD BACKGROUND ---
+        grid_size = 10
+        checkerboard = QPixmap(grid_size * 2, grid_size * 2)
+        checkerboard.fill(QColor(255, 255, 255))
+        painter = QPainter(checkerboard)
+        painter.fillRect(0, 0, grid_size, grid_size, QColor(200, 200, 200))
+        painter.fillRect(grid_size, grid_size, grid_size, grid_size, QColor(200, 200, 200))
+        painter.end()
+        self.setBackgroundBrush(QBrush(checkerboard))
 
         self.image_item = QGraphicsPixmapItem()
         self.mask_item = QGraphicsPixmapItem()
@@ -69,7 +78,11 @@ class MangaCanvas(QGraphicsView):
     def set_image(self, cv_img):
         self.cv_img = cv_img
         h, w = cv_img.shape[:2]
-        q_img = QImage(cv_img.data, w, h, w*3, QImage.Format_RGB888)
+        # Support RGBA rendering if transparency is present
+        if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
+            q_img = QImage(cv_img.data, w, h, w*4, QImage.Format_RGBA8888)
+        else:
+            q_img = QImage(cv_img.data, w, h, w*3, QImage.Format_RGB888)
         self.image_item.setPixmap(QPixmap.fromImage(q_img))
         self.mask = QImage(w, h, QImage.Format_ARGB32)
         self.mask.fill(Qt.transparent)

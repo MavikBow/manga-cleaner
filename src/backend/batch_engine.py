@@ -45,7 +45,14 @@ class BatchEngine(QObject):
         filename = f"{orig_name}_cleaned.{ext}"
         save_path = os.path.join(self.output_dir, filename)
         
-        out_bgr = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
+        # Handle alpha channel conversions on export
+        if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
+            out_bgr = cv2.cvtColor(cv_img, cv2.COLOR_RGBA2BGRA)
+            if ext.lower() in ['jpg', 'jpeg']:
+                out_bgr = cv2.cvtColor(out_bgr, cv2.COLOR_BGRA2BGR)
+        else:
+            out_bgr = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
+
         cv2.imwrite(save_path, out_bgr)
         
         logger.info(f"[+] Successfully Saved Cleaned: {filename}")
