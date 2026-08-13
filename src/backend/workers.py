@@ -97,7 +97,10 @@ class AIWorker(QObject):
 
             img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
             if img is not None and len(img.shape) == 3 and img.shape[2] == 4:
-                mask = (img[:, :, 3] == 0).astype(np.uint8) * 255
+                # Grab EVERYTHING that isn't 100% solid opaque (catches the soft fringes)
+                mask = (img[:, :, 3] < 255).astype(np.uint8) * 255
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                mask = cv2.dilate(mask, kernel, iterations=1)
             else:
                 h, w = img.shape[:2] if img is not None else (100, 100)
                 mask = np.zeros((h, w), dtype=np.uint8)
