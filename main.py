@@ -1,8 +1,9 @@
 import sys
 import os
+import ctypes
 import multiprocessing
 from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Qt, qInstallMessageHandler
 from src.frontend.main_window import MainWindow
 from src.utils.logger import logger
@@ -23,6 +24,13 @@ def qt_message_handler(mode, context, message):
 #/////////////////////////////////#
 
 def main():
+
+    # Taskbar Icon Fix for Windows
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mangacleaner.app")
+    except Exception:
+        pass
+
     # 0. Hidden Console Fix
     if sys.stdout is None:
         sys.stdout = open(os.devnull, "w")
@@ -50,6 +58,9 @@ def main():
     else:
         bundle_dir = Paths.BASE_DIR
 
+    icon_path = os.path.join(bundle_dir, "assets", "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     qss_path = os.path.join(bundle_dir, "src", "frontend", "styles.qss")
 
     if os.path.exists(qss_path):
