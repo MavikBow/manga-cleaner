@@ -13,11 +13,17 @@ class ImageProcessor:
         engine = AIManager.get_ocr()
         if not engine: return np.zeros(cv_img.shape[:2], dtype=np.uint8)
 
-        h, w = cv_img.shape[:2]
+        # Strip alpha channel just for AI Inference
+        if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
+            cv_img_rgb = cv_img[:, :, :3]
+        else:
+            cv_img_rgb = cv_img
+
+        h, w = cv_img_rgb.shape[:2]
         ph, pw = ((h + 31) // 32 * 32), ((w + 31) // 32 * 32)
         pad_h, pad_w = ph - h, pw - w
         
-        padded = cv2.copyMakeBorder(cv_img, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=[0,0,0])
+        padded = cv2.copyMakeBorder(cv_img_rgb, 0, pad_h, 0, pad_w, cv2.BORDER_CONSTANT, value=[0,0,0])
         img_data = padded.astype(np.float32) / 255.0
         img_data = np.transpose(img_data, (2, 0, 1))[np.newaxis, :]
 
@@ -70,13 +76,19 @@ class ImageProcessor:
             tile_mask = mask_img[y1:y2, x1:x2]
             th, tw = tile_img.shape[:2]
 
+            # Strip Alpha for AI inference to prevent ONNX crash
+            if len(tile_img.shape) == 3 and tile_img.shape[2] == 4:
+                tile_img_rgb = tile_img[:, :, :3]
+            else:
+                tile_img_rgb = tile_img
+
             #/////////////////////////////////#
             #     SNAP-TO-8 PADDING LOGIC     #
             #/////////////////////////////////#
             ph, pw = ((th + 7) // 8 * 8), ((tw + 7) // 8 * 8)
             pad_h, pad_w = ph - th, pw - tw
             
-            inp_img = cv2.copyMakeBorder(tile_img, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
+            inp_img = cv2.copyMakeBorder(tile_img_rgb, 0, pad_h, 0, pad_w, cv2.BORDER_REFLECT)
             inp_img = inp_img.astype(np.float32) / 255.0
             inp_img = np.transpose(inp_img, (2, 0, 1))[np.newaxis, :]
             
@@ -88,7 +100,14 @@ class ImageProcessor:
             res = res[0:th, 0:tw]
 
             history.append((x1, y1, output[y1:y2, x1:x2].copy().astype(np.uint8)))
-            output[y1:y2, x1:x2] = res.astype(np.float32)
+
+            # Apply generated pixels and restore Alpha opacity (set alpha = 255)
+            if len(output.shape) == 3 and output.shape[2] == 4:
+                output[y1:y2, x1:x2, :3] = res.astype(np.float32)
+                output[y1:y2, x1:x2, 3] = 255
+            else:
+                output[y1:y2, x1:x2] = res.astype(np.float32)
+
             processed_mask[y1:y2, x1:x2] = 255
 
             if progress_callback: progress_callback(int((idx/total)*100))
