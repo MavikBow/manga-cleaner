@@ -31,6 +31,7 @@ class MangaCanvas(QGraphicsView):
 
         self.image_item = QGraphicsPixmapItem()
         self.mask_item = QGraphicsPixmapItem()
+        self.mask_item.setOpacity(160 / 255.0)
         self.scene.addItem(self.image_item)
         self.scene.addItem(self.mask_item)
 
@@ -154,7 +155,7 @@ class MangaCanvas(QGraphicsView):
             color = Qt.transparent
         else:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-            color = QColor(255, 0, 0, 160)
+            color = QColor(255, 0, 0, 255)
             
         return painter, color
 

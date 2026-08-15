@@ -277,9 +277,9 @@ class MainWindow(QMainWindow):
             h, w = result.shape[:2]
             rgba = np.zeros((h, w, 4), dtype=np.uint8)
             if getattr(self, "last_scan_type", "ocr") == "transparency":
-                rgba[result > 0] = [0, 255, 0, 160]
+                rgba[result > 0] = [0, 255, 0, 255]
             else:
-                rgba[result > 0] = [255, 0, 0, 160]
+                rgba[result > 0] = [255, 0, 0, 255]
             self.canvas.mask = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
             self.canvas.update_mask_display()
             if self.is_batching:
