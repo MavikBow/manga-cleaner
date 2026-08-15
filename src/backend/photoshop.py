@@ -2,6 +2,7 @@ import os
 import cv2
 import tempfile
 import numpy as np
+import winreg
 from src.utils.logger import logger
 
 #/////////////////////////////////#
@@ -10,11 +11,43 @@ from src.utils.logger import logger
 
 class PhotoshopBridge:
     @staticmethod
+    def _get_photoshop_connection():
+        # Scans the Windows Registry for all PS versions and returns the first working COM object
+        import win32com.client
+        prog_ids = set()
+        prog_ids.add("Photoshop.Application")
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, "") as hkcr:
+                num_keys = winreg.QueryInfoKey(hkcr)[0]
+                for i in range(num_keys):
+                    key_name = winreg.EnumKey(hkcr, i)
+                    if key_name.startswith("Photoshop.Application"):
+                        prog_ids.add(key_name)
+        except Exception as e:
+            logger.warning(f"Registry scan encountered an issue: {e}")
+
+        # Sort by length descending. This ensures it tries specific
+        # versions before generic shortcuts that might be broken
+        sorted_ids = sorted(list(prog_ids), key=len, reverse=True)
+        logger.info(f"[i] Testing {len(sorted_ids)} potential Photoshop COM strings...")
+
+        for prog_id in sorted_ids:
+            try:
+                ps = win32com.client.Dispatch(prog_id)
+                logger.info(f"[+] Successfully connected to Photoshop via: {prog_id}")
+                return ps
+            except:
+                pass # Silently fail and try the next one
+
+        # If it finishes the loop and finds nothing
+        raise Exception("Could not establish a COM connection to any version of Photoshop.")
+
+    @staticmethod
     def send_to_ps(original_rgb: np.ndarray, cleaned_rgb: np.ndarray) -> str:
         """Single page transfer (Manual Mode)"""
         try:
-            import win32com.client
-            ps = win32com.client.Dispatch("Photoshop.Application")
+            ps = PhotoshopBridge._get_photoshop_connection()
             
             temp_path = tempfile.gettempdir()
             orig_file = os.path.join(temp_path, "mc_transfer_orig.png")
@@ -50,8 +83,7 @@ class PhotoshopBridge:
     def open_batch_in_ps(orig_paths: list, clean_dir: str):
         """Opens entire batch as layers after AI finishes"""
         try:
-            import win32com.client
-            ps = win32com.client.Dispatch("Photoshop.Application")
+            ps = PhotoshopBridge._get_photoshop_connection()
             logger.info(f"[+] Initializing Photoshop Batch for {len(orig_paths)} pages...")
 
             for i, orig_path in enumerate(orig_paths):
