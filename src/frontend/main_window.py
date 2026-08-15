@@ -288,6 +288,8 @@ class MainWindow(QMainWindow):
                 return
 
         self.stop_thread()
+        if not self.is_batching:
+            get_pool().submit(_run_flush_process, False)
 
     def on_ocr_scan(self):
         if self.canvas.cv_img is None or self.worker_thread: return
