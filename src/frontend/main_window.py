@@ -442,11 +442,24 @@ class MainWindow(QMainWindow):
                 im_buf_arr.tofile(path)
 
     def on_photoshop_bridge(self):
-        if self.canvas.cv_img is None: return
-        it = self.file_list.currentItem()
-        if not it: return
-        orig = cv2.cvtColor(cv2.imread(it.data(Qt.UserRole)), cv2.COLOR_BGR2RGB)
-        PhotoshopBridge.send_to_ps(orig, self.canvas.cv_img)
+        if self.canvas.cv_img is None or not self.current_img_path: return
+
+        img_data = np.fromfile(self.current_img_path, dtype=np.uint8)
+        orig = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+
+        if orig is not None:
+            if len(orig.shape) == 3 and orig.shape[2] == 4:
+                orig = cv2.cvtColor(orig, cv2.COLOR_BGRA2RGBA)
+            else:
+                orig = cv2.cvtColor(orig, cv2.COLOR_BGR2RGB)
+
+            self.setCursor(Qt.WaitCursor)
+            res = PhotoshopBridge.send_to_ps(orig, self.canvas.cv_img)
+            self.setCursor(Qt.ArrowCursor)
+
+            if res != "Success":
+                logger.error(f"[X] UI Blocked PS Bridge Transfer: {res}")
+                QMessageBox.warning(self, "Photoshop Error", f"Could not send to Photoshop:\n{res}\n\nCheck your logs folder for details.")
 
     def update_telemetry(self):
         ram, gpu = self.monitor.get_stats()

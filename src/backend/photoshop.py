@@ -17,11 +17,18 @@ class PhotoshopBridge:
             ps = win32com.client.Dispatch("Photoshop.Application")
             
             temp_path = tempfile.gettempdir()
-            orig_file = os.path.join(temp_path, "mc_transfer_orig.jpg")
-            clean_file = os.path.join(temp_path, "mc_transfer_clean.jpg")
+            orig_file = os.path.join(temp_path, "mc_transfer_orig.png")
+            clean_file = os.path.join(temp_path, "mc_transfer_clean.png")
             
-            cv2.imwrite(orig_file, cv2.cvtColor(original_rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 98])
-            cv2.imwrite(clean_file, cv2.cvtColor(cleaned_rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 98])
+            if len(original_rgb.shape) == 3 and original_rgb.shape[2] == 4:
+                cv2.imwrite(orig_file, cv2.cvtColor(original_rgb, cv2.COLOR_RGBA2BGRA))
+            else:
+                cv2.imwrite(orig_file, cv2.cvtColor(original_rgb, cv2.COLOR_RGB2BGR))
+
+            if len(cleaned_rgb.shape) == 3 and cleaned_rgb.shape[2] == 4:
+                cv2.imwrite(clean_file, cv2.cvtColor(cleaned_rgb, cv2.COLOR_RGBA2BGRA))
+            else:
+                cv2.imwrite(clean_file, cv2.cvtColor(cleaned_rgb, cv2.COLOR_RGB2BGR))
 
             ps.Open(orig_file)
             doc = ps.ActiveDocument
@@ -36,6 +43,7 @@ class PhotoshopBridge:
             doc.ActiveLayer.Name = "MangaCleaner_Result"
             return "Success"
         except Exception as e:
+            logger.error(f"[X] Photoshop Bridge Exception:", exc_info=True)
             return str(e)
 
     @staticmethod
