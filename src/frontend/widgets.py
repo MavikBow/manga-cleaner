@@ -57,10 +57,11 @@ class HardwareMonitor(QFrame):
         lay.addWidget(self.lbl)
         lay.addWidget(self.bar)
 
-class BrushSlider(QWidget):
-    def __init__(self, label, default, minimum, maximum, callback=None, is_tile=False):
+class LabeledSlider(QWidget):
+    def __init__(self, label, default, minimum, maximum, callback=None, is_tile=False, suffix="px"):
         super().__init__()
         self.is_tile = is_tile
+        self.suffix = suffix
         self.base_label = label
         lay = QVBoxLayout(self)
         
@@ -86,4 +87,4 @@ class BrushSlider(QWidget):
         if self.is_tile:
             self.display.setText(f"{self.base_label}: {val * 512}px")
         else:
-            self.display.setText(f"{self.base_label}: {val}px")
+            self.display.setText(f"{self.base_label}: {val}{self.suffix}")

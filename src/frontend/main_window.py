@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QDialog, QComboBox, QDialogButtonBox, QFormLayout)
 from PySide6.QtGui import QShortcut, QKeySequence, QImage
 from PySide6.QtCore import Qt, QTimer, QThread
-from src.frontend.widgets import FileListWidget, ToolGroup, BrushSlider, HardwareMonitor
+from src.frontend.widgets import FileListWidget, ToolGroup, LabeledSlider, HardwareMonitor
 from src.frontend.canvas import MangaCanvas
 from src.frontend.help_system import HelpSystem
 from src.utils.system_info import SystemMonitor
@@ -131,8 +131,9 @@ class MainWindow(QMainWindow):
         self.tools.buttons["LASSO"].clicked.connect(lambda: self.set_tool("LASSO"))
         self.tools.buttons["CLEAR"].clicked.connect(self.canvas.clear_mask)
         
-        self.b_slider = BrushSlider("BRUSH SIZE", 40, 1, 300, self.canvas.set_brush_size)
-        self.t_slider = BrushSlider("MAX TILE SIZE", 2048, 512, 4096, is_tile=True)
+        self.b_slider = LabeledSlider("BRUSH SIZE", 40, 1, 300, self.canvas.set_brush_size)
+        self.o_slider = LabeledSlider("MASK OPACITY", 60, 0, 100, self.canvas.set_mask_opacity, suffix="%")
+        self.t_slider = LabeledSlider("MAX TILE SIZE", 2048, 512, 4096, is_tile=True)
         
         btn_scan = QPushButton("OCR SCAN [O]")
         btn_scan.setObjectName("ActionBtn")
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
         
         rp_lay.addWidget(self.tools)
         rp_lay.addWidget(self.b_slider)
+        rp_lay.addWidget(self.o_slider)
         rp_lay.addSpacing(20)
         rp_lay.addWidget(btn_scan)
         rp_lay.addWidget(btn_trans)
