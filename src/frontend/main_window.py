@@ -36,7 +36,6 @@ class MainWindow(QMainWindow):
         self.is_batching = False
         self.is_currently_erasing = False
         self.current_img_path = None
-        self.last_scan_type = "ocr"
         self.batch_scan_type = "ocr"
         
         self.init_ui()
@@ -262,45 +261,50 @@ class MainWindow(QMainWindow):
     #/////////////////////////////////#
 
     def on_task_finished(self, result, patches):
-        # Explicitly check for 'not None' because empty list [] means Clean Task with nothing highlighted
-        if patches is not None:
-            if len(patches) > 0: # Only update canvas/history if things were actually cleaned
+        task = self.worker.task  # "ocr", "clean" or "transparency"
+
+        if task == "clean":
+            if len(patches) > 0:
                 for x, y, p in patches: self.history.push_image_action(x, y, p)
                 self.canvas.set_image(result)
                 self.canvas.clear_mask()
-            
+
             if self.is_batching:
                 self.stop_thread()
                 is_last = self.batch_engine.save_current(self.canvas.cv_img)
                 if is_last: self.finalize_batch()
                 else: self.step_batch()
                 return
-        else: 
+
+        elif task in ["ocr", "transparency"]:
             h, w = result.shape[:2]
             rgba = np.zeros((h, w, 4), dtype=np.uint8)
-            if getattr(self, "last_scan_type", "ocr") == "transparency":
+
+            if task == "transparency":
                 rgba[result > 0] = [0, 255, 0, 255]
             else:
                 rgba[result > 0] = [255, 0, 0, 255]
+
             self.canvas.mask = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
             self.canvas.update_mask_display()
+
             if self.is_batching:
                 self.stop_thread()
                 self.on_lama_clean()
                 return
 
         self.stop_thread()
-        if not self.is_batching:
+
+        # Only flush VRAM if the completed task actually used the AI models
+        if not self.is_batching and task in ["ocr", "clean"]:
             get_pool().submit(_run_flush_process, False)
 
     def on_ocr_scan(self):
         if self.canvas.cv_img is None or self.worker_thread: return
-        self.last_scan_type = "ocr"
         self.run_thread("ocr", self.canvas.cv_img)
 
     def on_transparency_scan(self):
         if self.canvas.cv_img is None or not self.current_img_path or self.worker_thread: return
-        self.last_scan_type = "transparency"
         self.run_thread("transparency", self.canvas.cv_img)
 
     def on_lama_clean(self):
