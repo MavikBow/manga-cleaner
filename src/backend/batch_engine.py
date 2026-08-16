@@ -40,7 +40,7 @@ class BatchEngine(QObject):
         return None
 
     def save_current(self, cv_img):
-        ext = self.export_format if self.export_format != "photoshop" else "jpg"
+        ext = self.export_format if self.export_format not in ["photoshop", "photopea"] else "png"
         orig_name = os.path.splitext(os.path.basename(self.files[self.current_index]))[0]
         filename = f"{orig_name}_cleaned.{ext}"
         save_path = os.path.join(self.output_dir, filename)

@@ -16,6 +16,7 @@ from src.utils.config import Config
 from src.utils.logger import logger
 from src.backend.workers import AIWorker
 from src.backend.photoshop import PhotoshopBridge
+from src.backend.photopea import PhotopeaBridge
 from src.backend.batch_engine import BatchEngine
 from src.backend.workers import AIWorker, get_pool, _run_flush_process
 
@@ -73,8 +74,11 @@ class MainWindow(QMainWindow):
         btn_open = QPushButton("IMPORT FOLDER")
         btn_open.clicked.connect(self.on_open_folder)
         
-        btn_ps = QPushButton("PS BRIDGE")
-        btn_ps.clicked.connect(self.on_photoshop_bridge)
+        self.btn_editor = QPushButton("SEND TO EDITOR ▼")
+        ed_menu = QMenu(self)
+        ed_menu.addAction("Adobe Photoshop").triggered.connect(lambda: self.on_editor_bridge("photoshop"))
+        ed_menu.addAction("Photopea (Web)").triggered.connect(lambda: self.on_editor_bridge("photopea"))
+        self.btn_editor.setMenu(ed_menu)
         
         self.btn_export = QPushButton("EXPORT ▼")
         self.btn_export.setObjectName("PrimaryBtn")
@@ -89,7 +93,7 @@ class MainWindow(QMainWindow):
         nav_lay.addSpacing(10)
         nav_lay.addWidget(btn_help)
         nav_lay.addWidget(btn_open)
-        nav_lay.addWidget(btn_ps)
+        nav_lay.addWidget(self.btn_editor)
         nav_lay.addWidget(self.btn_export)
         main_lay.addWidget(self.nav)
 
@@ -402,10 +406,12 @@ class MainWindow(QMainWindow):
         self.is_batching = False
         get_pool().submit(_run_flush_process, False).result()
         
+        self.setCursor(Qt.WaitCursor)
         if self.batch_engine.export_format == "photoshop":
-            self.setCursor(Qt.WaitCursor)
             PhotoshopBridge.open_batch_in_ps(self.batch_engine.files, self.batch_engine.output_dir)
-            self.setCursor(Qt.ArrowCursor)
+        elif self.batch_engine.export_format == "photopea":
+            PhotopeaBridge.open_batch_in_photopea(self.batch_engine.files, self.batch_engine.output_dir)
+        self.setCursor(Qt.ArrowCursor)
             
         QMessageBox.information(self, "Batch Complete", f"Saved to: {self.batch_engine.output_dir}")
 
@@ -457,7 +463,7 @@ class MainWindow(QMainWindow):
             if is_success:
                 im_buf_arr.tofile(path)
 
-    def on_photoshop_bridge(self):
+    def on_editor_bridge(self, target="photoshop"):
         if self.canvas.cv_img is None or not self.current_img_path: return
 
         img_data = np.fromfile(self.current_img_path, dtype=np.uint8)
@@ -470,12 +476,15 @@ class MainWindow(QMainWindow):
                 orig = cv2.cvtColor(orig, cv2.COLOR_BGR2RGB)
 
             self.setCursor(Qt.WaitCursor)
-            res = PhotoshopBridge.send_to_ps(orig, self.canvas.cv_img)
+            if target == "photoshop":
+                res = PhotoshopBridge.send_to_ps(orig, self.canvas.cv_img)
+            elif target == "photopea":
+                res = PhotopeaBridge.send_to_photopea(orig, self.canvas.cv_img, self.current_img_path)
             self.setCursor(Qt.ArrowCursor)
 
             if res != "Success":
-                logger.error(f"[X] UI Blocked PS Bridge Transfer: {res}")
-                QMessageBox.warning(self, "Photoshop Error", f"Could not send to Photoshop:\n{res}\n\nCheck your logs folder for details.")
+                logger.error(f"[X] UI Blocked Editor Bridge Transfer: {res}")
+                QMessageBox.warning(self, "Editor Error", f"Could not send to {target.capitalize()}:\n{res}\n\nCheck your logs folder for details.")
 
     def update_telemetry(self):
         ram, gpu = self.monitor.get_stats()
@@ -497,7 +506,7 @@ class BatchSetupDialog(QDialog):
         self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         self.export_fmt = QComboBox()
-        self.export_fmt.addItems(["jpg", "png", "photoshop"])
+        self.export_fmt.addItems(["jpg", "png", "photoshop", "photopea"])
         self.export_fmt.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
