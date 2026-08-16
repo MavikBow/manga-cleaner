@@ -308,7 +308,19 @@ class MainWindow(QMainWindow):
         ptr = self.canvas.mask.bits()
         mask_np = np.frombuffer(ptr, np.uint8).reshape((self.canvas.mask.height(), self.canvas.mask.width(), 4))
         mask_gray = mask_np[:, :, 3].copy()
-        
+
+        # Empty mask check
+        if not np.any(mask_gray):
+            if self.is_batching:
+                is_last = self.batch_engine.save_current(self.canvas.cv_img)
+                if is_last:
+                    self.finalize_batch()
+                else:
+                    self.step_batch()
+            else:
+                QMessageBox.information(self, "Nothing Selected", "No mask area detected!\n\nPlease use the scan tools or manual brushes to select an area to clean.")
+            return
+
         t_size = self.t_slider.slider.value() * 512
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
