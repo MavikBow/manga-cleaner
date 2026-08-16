@@ -31,6 +31,7 @@ class MangaCanvas(QGraphicsView):
 
         self.image_item = QGraphicsPixmapItem()
         self.mask_item = QGraphicsPixmapItem()
+        self.mask_item.setOpacity(60 / 100.0)
         self.scene.addItem(self.image_item)
         self.scene.addItem(self.mask_item)
 
@@ -154,7 +155,7 @@ class MangaCanvas(QGraphicsView):
             color = Qt.transparent
         else:
             painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
-            color = QColor(255, 0, 0, 160)
+            color = QColor(255, 0, 0, 255)
             
         return painter, color
 
@@ -176,6 +177,11 @@ class MangaCanvas(QGraphicsView):
         painter.fillPath(self.lasso_path, QBrush(color))
         painter.end()
         self.update_mask_display()
+
+    def set_mask_opacity(self, opacity_percent):
+        # Purely cosmetic: Adjusts the UI layer visibility, leaving math matrix intact
+        if self.mask_item:
+            self.mask_item.setOpacity(opacity_percent / 100.0)
 
     def clear_mask(self):
         if self.mask:

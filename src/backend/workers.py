@@ -91,18 +91,17 @@ class AIWorker(QObject):
             logger.error(f"[X] LaMa Clean Task crashed in background process: {e}")
             self.error.emit(str(e))
 
-    def run_transparency(self, img_path):
+    def run_transparency(self, cv_img):
         try:
             logger.info("[i] Executing Transparency scan in QThread...")
 
-            img = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-            if img is not None and len(img.shape) == 3 and img.shape[2] == 4:
+            if cv_img is not None and len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
                 # Grab EVERYTHING that isn't 100% solid opaque (catches the soft fringes)
-                mask = (img[:, :, 3] < 255).astype(np.uint8) * 255
+                mask = (cv_img[:, :, 3] < 255).astype(np.uint8) * 255
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
                 mask = cv2.dilate(mask, kernel, iterations=1)
             else:
-                h, w = img.shape[:2] if img is not None else (100, 100)
+                h, w = cv_img.shape[:2] if cv_img is not None else (100, 100)
                 mask = np.zeros((h, w), dtype=np.uint8)
 
             logger.info("[+] Transparency scan completed.")
