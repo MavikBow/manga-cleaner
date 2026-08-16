@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
     def on_transparency_scan(self):
         if self.canvas.cv_img is None or not self.current_img_path or self.worker_thread: return
         self.last_scan_type = "transparency"
-        self.run_thread("transparency", self.current_img_path)
+        self.run_thread("transparency", self.canvas.cv_img)
 
     def on_lama_clean(self):
         if self.canvas.cv_img is None or self.worker_thread: return
