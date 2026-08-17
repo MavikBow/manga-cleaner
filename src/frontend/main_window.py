@@ -48,6 +48,11 @@ class MainWindow(QMainWindow):
         self.batch_scan_type = "ocr"
         self.image_sessions = {}
         self.page_states = {}
+        self.task_queue = []
+        self.total_tasks = 0
+        self.completed_tasks = 0
+        self.total_lama_tasks = 0
+        self.completed_lama_tasks = 0
         
         self.init_ui()
         self.setup_shortcuts()
@@ -162,9 +167,13 @@ class MainWindow(QMainWindow):
         self.btn_clean.setFixedHeight(45)
         self.btn_clean.clicked.connect(self.on_lama_clean)
         
+        self.queue_lbl = QLabel("Processing / Queued: 0")
+        self.queue_lbl.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px;")
+        self.queue_lbl.setAlignment(Qt.AlignCenter)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(4)
+        self.progress_bar.setFixedHeight(10)
         
         rp_lay.addWidget(self.tools)
         rp_lay.addWidget(self.b_slider)
@@ -174,6 +183,7 @@ class MainWindow(QMainWindow):
         rp_lay.addWidget(btn_trans)
         rp_lay.addWidget(self.t_slider)
         rp_lay.addWidget(self.btn_clean)
+        rp_lay.addWidget(self.queue_lbl)
         rp_lay.addStretch()
         rp_lay.addWidget(self.progress_bar)
         
@@ -279,126 +289,164 @@ class MainWindow(QMainWindow):
     #      AI EXECUTION PIPELINE      #
     #/////////////////////////////////#
 
-    def on_task_finished(self, result, patches):
-        task = self.worker.task  # "ocr", "clean" or "transparency"
-        source_path = getattr(self.worker, 'source_path', self.current_img_path)
+    def _update_queue_ui(self):
+        """Updates the status label and global progress bar"""
+        pending = self.total_lama_tasks - self.completed_lama_tasks
+        self.queue_lbl.setText(f"Processing / Queued: {pending}")
 
-        # If user switched pagess while the model was running
-        if source_path != self.current_img_path:
-            # Update the background page instead of the active canvas
-            if source_path in self.image_sessions:
-                session = self.image_sessions[source_path]
-                if task == "clean" and len(patches) > 0:
-                    for x, y, p in patches: session["history"].push_image_action(x, y, p)
-                    session["img"] = result
-                    session["mask"].fill(Qt.transparent)
-                elif task in ["ocr", "transparency"]:
-                    h, w = result.shape[:2]
-                    rgba = np.zeros((h, w, 4), dtype=np.uint8)
-                    rgba[result > 0] = [0, 255, 0, 255] if task == "transparency" else [255, 0, 0, 255]
-                    session["mask"] = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
+        if pending > 0 and self.total_lama_tasks > 0:
+            val = int((self.completed_lama_tasks / self.total_lama_tasks) * 100)
+            self.progress_bar.setValue(val)
+            self.progress_bar.setVisible(True)
+        else:
+            self.progress_bar.setVisible(False)
+            self.total_lama_tasks = 0
+            self.completed_lama_tasks = 0
 
-            self.stop_thread()
-            if not self.is_batching and task in ["ocr", "clean"]:
+    def on_worker_progress(self, val):
+        """Calculates fractional progress for smooth overall queue tracking"""
+        if self.worker.task != "clean" or self.total_lama_tasks == 0: return
+        base_progress = (self.completed_lama_tasks / self.total_lama_tasks) * 100
+        task_fraction = (val / 100.0) * (100 / self.total_lama_tasks)
+        self.progress_bar.setValue(int(base_progress + task_fraction))
+
+    def enqueue_task(self, task, path, *args):
+        """Pushes an AI task into the FIFO queue and triggers the processor"""
+        self.task_queue.append({
+            "task": task,
+            "path": path,
+            "args": args
+        })
+        self._update_queue_ui()
+        self._process_queue()
+
+    def _process_queue(self):
+        """Pulls the next task from the queue and runs it"""
+        if self.worker_thread is not None:
+            return
+
+        if not self.task_queue:
+            self._update_queue_ui()
+            if not self.is_batching:
                 get_pool().submit(_run_flush_process, False)
             return
 
-        # If user is still on the same page
-        if task == "clean":
-            if len(patches) > 0:
-                for x, y, p in patches: self.history.push_image_action(x, y, p)
-                self.canvas.set_image(result)
-                self.canvas.clear_mask()
-
-            if self.is_batching:
-                self.stop_thread()
-                is_last = self.batch_engine.save_current(self.canvas.cv_img)
-                if is_last: self.finalize_batch()
-                else: self.step_batch()
-                return
-
-        elif task in ["ocr", "transparency"]:
-            h, w = result.shape[:2]
-            rgba = np.zeros((h, w, 4), dtype=np.uint8)
-
-            if task == "transparency":
-                rgba[result > 0] = [0, 255, 0, 255]
-            else:
-                rgba[result > 0] = [255, 0, 0, 255]
-
-            self.canvas.mask = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
-            self.canvas.update_mask_display()
-
-            if self.is_batching:
-                self.stop_thread()
-                self.on_lama_clean()
-                return
-
-        self.stop_thread()
-
-        # Only flush VRAM if the completed task actually used the AI models
-        if not self.is_batching and task in ["ocr", "clean"]:
-            get_pool().submit(_run_flush_process, False)
-
-    def on_ocr_scan(self):
-        if self.canvas.cv_img is None or self.worker_thread: return
-        self.run_thread("ocr", self.canvas.cv_img)
-
-    def on_transparency_scan(self):
-        if self.canvas.cv_img is None or not self.current_img_path or self.worker_thread: return
-        self.run_thread("transparency", self.canvas.cv_img)
-
-    def on_lama_clean(self):
-        if self.canvas.cv_img is None or self.worker_thread: return
-        ptr = self.canvas.mask.bits()
-        mask_np = np.frombuffer(ptr, np.uint8).reshape((self.canvas.mask.height(), self.canvas.mask.width(), 4))
-        mask_gray = mask_np[:, :, 3].copy()
-
-        # Empty mask check
-        if not np.any(mask_gray):
-            if self.is_batching:
-                is_last = self.batch_engine.save_current(self.canvas.cv_img)
-                if is_last:
-                    self.finalize_batch()
-                else:
-                    self.step_batch()
-            else:
-                QMessageBox.information(self, "Nothing Selected", "No mask area detected!\n\nPlease use the scan tools or manual brushes to select an area to clean.")
-            return
-
-        t_size = self.t_slider.slider.value() * 512
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(True)
-        self.run_thread("clean", self.canvas.cv_img, mask_gray, t_size)
-
-    def run_thread(self, task, *args):
-        self.mark_current_touched() # mark immediately so it caches if we leave (will be reworked)
+        item = self.task_queue.pop(0)
+        self._update_queue_ui()
+ 
         self.setCursor(Qt.WaitCursor)
         self.worker_thread = QThread()
-        self.worker = AIWorker(task, args)
-        self.worker.source_path = self.current_img_path
+        self.worker = AIWorker(item["task"], item["args"])
+        self.worker.source_path = item["path"]
+
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.process)
-        self.worker.progress.connect(self.progress_bar.setValue)
+        self.worker.progress.connect(self.on_worker_progress)
         self.worker.finished.connect(self.on_task_finished)
         self.worker.error.connect(self.on_task_error)
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
-        self.worker_thread.start()
 
-    def on_task_error(self, message):
-        self.stop_thread()
-        self.is_batching = False
-        get_pool().submit(_run_flush_process, False).result()
-        QMessageBox.critical(self, "Hardware Error", message)
+        self.worker_thread.start()
 
     def stop_thread(self):
         self.setCursor(Qt.ArrowCursor)
-        self.progress_bar.setVisible(False)
         if self.worker_thread:
             self.worker_thread.quit()
             self.worker_thread.wait()
             self.worker_thread = None
+        self._update_queue_ui()
+
+    def on_task_error(self, message):
+        self.stop_thread()
+        self.is_batching = False
+        self.task_queue.clear()
+        self.total_lama_tasks = 0
+        self.completed_lama_tasks = 0
+        self._update_queue_ui()
+        get_pool().submit(_run_flush_process, False).result()
+        QMessageBox.critical(self, "Hardware Error", message)
+
+    def on_task_finished(self, result, patches):
+        task = self.worker.task  
+        source_path = getattr(self.worker, 'source_path', self.current_img_path)
+        is_active = (source_path == self.current_img_path)
+
+        if task == "clean":
+            self.completed_lama_tasks += 1
+            target_history = self.history if is_active else self.image_sessions[source_path]["history"]
+            if len(patches) > 0:
+                for x, y, p in patches: target_history.push_image_action(x, y, p)
+
+            if is_active:
+                self.canvas.set_image(result)
+                self.canvas.clear_mask()
+            else:
+                self.image_sessions[source_path]["img"] = result
+                self.image_sessions[source_path]["mask"].fill(Qt.transparent)
+
+        elif task in ["ocr", "transparency"]:
+            h, w = result.shape[:2]
+            rgba = np.zeros((h, w, 4), dtype=np.uint8)
+            rgba[result > 0] = [0, 255, 0, 255] if task == "transparency" else [255, 0, 0, 255]
+            new_mask = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
+
+            if is_active:
+                self.canvas.mask = new_mask
+                self.canvas.update_mask_display()
+            else:
+                self.image_sessions[source_path]["mask"] = new_mask
+
+        self.stop_thread()
+
+        # Handle Background Batching Loop
+        if self.is_batching:
+            if task == "clean":
+                final_img = self.canvas.cv_img if is_active else self.image_sessions[source_path]["img"]
+                is_last = self.batch_engine.save_current(final_img)
+                if is_last: self.finalize_batch()
+                else: self.step_batch() # Chain the next scan strictly after this clean finishes
+            elif task in ["ocr", "transparency"]:
+                mask_q = self.canvas.mask if is_active else self.image_sessions[source_path]["mask"]
+                img_cv = self.canvas.cv_img if is_active else self.image_sessions[source_path]["img"]
+
+                ptr = mask_q.bits()
+                mask_np = np.frombuffer(ptr, np.uint8).reshape((mask_q.height(), mask_q.width(), 4))
+                mask_gray = mask_np[:, :, 3].copy()
+                t_size = self.t_slider.slider.value() * 512
+                self.enqueue_task("clean", source_path, img_cv.copy(), mask_gray, t_size)
+
+        self._process_queue()
+
+    def on_ocr_scan(self):
+        if self.canvas.cv_img is None: return
+        self.mark_current_touched()
+        self.enqueue_task("ocr", self.current_img_path, self.canvas.cv_img.copy())
+
+    def on_transparency_scan(self):
+        if self.canvas.cv_img is None or not self.current_img_path: return
+        self.mark_current_touched()
+        self.enqueue_task("transparency", self.current_img_path, self.canvas.cv_img.copy())
+
+    def on_lama_clean(self):
+        if self.canvas.cv_img is None: return
+        ptr = self.canvas.mask.bits()
+        mask_np = np.frombuffer(ptr, np.uint8).reshape((self.canvas.mask.height(), self.canvas.mask.width(), 4))
+        mask_gray = mask_np[:, :, 3].copy()
+
+        if not np.any(mask_gray):
+            if self.is_batching:
+                is_last = self.batch_engine.save_current(self.canvas.cv_img)
+                if is_last: self.finalize_batch()
+                else: self.step_batch()
+            else:
+                QMessageBox.information(self, "Nothing Selected", "No mask area detected!")
+            return
+
+        self.total_lama_tasks += 1
+        t_size = self.t_slider.slider.value() * 512
+        self.mark_current_touched()
+        self.enqueue_task("clean", self.current_img_path, self.canvas.cv_img.copy(), mask_gray, t_size)
 
     #/////////////////////////////////#
     #    BATCH & PHOTOSHOP BRIDGE     #
@@ -417,29 +465,32 @@ class MainWindow(QMainWindow):
         paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
         self.batch_engine.initialize_batch(paths, fmt)
         get_pool().submit(_run_flush_process, True).result()
+        
         self.is_batching = True
+        self.total_lama_tasks += len(paths)
         self.step_batch()
 
     def step_batch(self):
         path = self.batch_engine.get_next()
         if path:
-            self.current_img_path = path
-
-            # Load with IMREAD_UNCHANGED to preserve Alpha channel
-            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+            img_data = np.fromfile(path, dtype=np.uint8)
+            img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
             if img is not None:
-                if len(img.shape) == 2:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                elif len(img.shape) == 3 and img.shape[2] == 4:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-                else:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    
-            self.canvas.set_image(img)
-            if self.batch_scan_type == "transparency":
-                self.on_transparency_scan()
-            else:
-                self.on_ocr_scan()
+                if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                elif len(img.shape) == 3 and img.shape[2] == 4: img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                else: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                
+                self.image_sessions[path] = {
+                    "img": img.copy(),
+                    "mask": QImage(img.shape[1], img.shape[0], QImage.Format_ARGB32),
+                    "history": HistoryManager(Config.MAX_HISTORY)
+                }
+                self.image_sessions[path]["mask"].fill(Qt.transparent)
+                self.page_states[path] = PageState.TOUCHED
+                self.file_list.update_item_visuals(path, True)
+                
+                scan_task = "transparency" if self.batch_scan_type == "transparency" else "ocr"
+                self.enqueue_task(scan_task, path, img.copy())
 
     def finalize_batch(self):
         self.is_batching = False
@@ -479,9 +530,9 @@ class MainWindow(QMainWindow):
 
     def on_file_clicked(self, it):
         path_real = it.data(Qt.UserRole)
-        if path_real == self.current_img_path: return # Don't reload if clicking the same file
+        if path_real == self.current_img_path: return 
 
-        # cache outgoing image (only if enum state says we touched it)
+        # cache outgoing image 
         if self.current_img_path and self.canvas.cv_img is not None:
             if self.page_states.get(self.current_img_path) == PageState.TOUCHED:
                 self.image_sessions[self.current_img_path] = {
@@ -492,7 +543,7 @@ class MainWindow(QMainWindow):
 
         self.current_img_path = path_real
 
-        # restore incoming image (if we previously touched it)
+        # restore incoming image 
         if path_real in self.image_sessions:
             session = self.image_sessions[path_real]
             self.history = session["history"]
@@ -505,15 +556,19 @@ class MainWindow(QMainWindow):
             img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
 
             if img is not None:
-                if len(img.shape) == 2:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                elif len(img.shape) == 3 and img.shape[2] == 4:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-                else:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                elif len(img.shape) == 3 and img.shape[2] == 4: img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                else: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
                 self.history = HistoryManager(Config.MAX_HISTORY)
                 self.canvas.set_image(img)
+                
+                # Pre-populate session immediately so background tasks can hit it safely
+                self.image_sessions[path_real] = {
+                    "img": img.copy(),
+                    "mask": self.canvas.mask.copy(),
+                    "history": self.history
+                }
             else:
                 QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
                 logger.error(f"Failed to decode image: {path_real}")
