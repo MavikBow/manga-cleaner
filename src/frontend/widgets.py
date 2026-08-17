@@ -18,6 +18,15 @@ class FileListWidget(QListWidget):
         item.setData(Qt.UserRole, full_path)
         self.addItem(item)
 
+    def update_item_visuals(self, full_path: str, is_touched: bool):
+        """Updates the text prefix based on the Enum state from the main window"""
+        for i in range(self.count()):
+            item = self.item(i)
+            if item.data(Qt.UserRole) == full_path:
+                prefix = "*" if is_touched else ""
+                item.setText(f"{prefix}{os.path.basename(full_path)}")
+                break
+
 class ToolGroup(QFrame):
     def __init__(self, title, button_configs):
         super().__init__()

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QDialog, QComboBox, QDialogButtonBox, QFormLayout)
 from PySide6.QtGui import QShortcut, QKeySequence, QImage
 from PySide6.QtCore import Qt, QTimer, QThread
+from enum import Enum, auto
 from src.frontend.widgets import FileListWidget, ToolGroup, LabeledSlider, HardwareMonitor
 from src.frontend.canvas import MangaCanvas
 from src.frontend.help_system import HelpSystem
@@ -19,6 +20,13 @@ from src.backend.photoshop import PhotoshopBridge
 from src.backend.photopea import PhotopeaBridge
 from src.backend.batch_engine import BatchEngine
 from src.backend.workers import AIWorker, get_pool, _run_flush_process
+
+#/////////////////////////////////#
+#         PAGE STATE ENUM         #
+#/////////////////////////////////#
+class PageState(Enum):
+    UNTOUCHED = auto()
+    TOUCHED = auto()
 
 #/////////////////////////////////#
 #     STUDIO MAIN CONTROLLER      #
@@ -38,6 +46,8 @@ class MainWindow(QMainWindow):
         self.is_currently_erasing = False
         self.current_img_path = None
         self.batch_scan_type = "ocr"
+        self.image_sessions = {}
+        self.page_states = {}
         
         self.init_ui()
         self.setup_shortcuts()
@@ -116,6 +126,7 @@ class MainWindow(QMainWindow):
         
         self.canvas = MangaCanvas()
         self.canvas.mask_changed.connect(lambda: self.history.push_mask_state(self.canvas.mask))
+        self.canvas.mask_changed.connect(self.mark_current_touched)
         self.canvas.tool_state_updated.connect(self.on_eraser_toggle_ui)
         
         self.rp = QFrame()
@@ -238,6 +249,7 @@ class MainWindow(QMainWindow):
         res = self.history.pop_image_undo(self.canvas.cv_img)
         if res:
             x, y, p = res
+            self.mark_current_touched()
             self.canvas.cv_img[y:y+p.shape[0], x:x+p.shape[1]] = p
             self.canvas.set_image(self.canvas.cv_img)
 
@@ -245,18 +257,21 @@ class MainWindow(QMainWindow):
         res = self.history.pop_image_redo(self.canvas.cv_img)
         if res:
             x, y, p = res
+            self.mark_current_touched()
             self.canvas.cv_img[y:y+p.shape[0], x:x+p.shape[1]] = p
             self.canvas.set_image(self.canvas.cv_img)
 
     def on_undo_mask(self):
         res = self.history.pop_mask_undo(self.canvas.mask)
         if res:
+            self.mark_current_touched()
             self.canvas.mask = res
             self.canvas.update_mask_display()
 
     def on_redo_mask(self):
         res = self.history.pop_mask_redo(self.canvas.mask)
         if res:
+            self.mark_current_touched()
             self.canvas.mask = res
             self.canvas.update_mask_display()
 
@@ -266,7 +281,29 @@ class MainWindow(QMainWindow):
 
     def on_task_finished(self, result, patches):
         task = self.worker.task  # "ocr", "clean" or "transparency"
+        source_path = getattr(self.worker, 'source_path', self.current_img_path)
 
+        # If user switched pagess while the model was running
+        if source_path != self.current_img_path:
+            # Update the background page instead of the active canvas
+            if source_path in self.image_sessions:
+                session = self.image_sessions[source_path]
+                if task == "clean" and len(patches) > 0:
+                    for x, y, p in patches: session["history"].push_image_action(x, y, p)
+                    session["img"] = result
+                    session["mask"].fill(Qt.transparent)
+                elif task in ["ocr", "transparency"]:
+                    h, w = result.shape[:2]
+                    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                    rgba[result > 0] = [0, 255, 0, 255] if task == "transparency" else [255, 0, 0, 255]
+                    session["mask"] = QImage(rgba.data, w, h, w*4, QImage.Format_ARGB32).copy()
+
+            self.stop_thread()
+            if not self.is_batching and task in ["ocr", "clean"]:
+                get_pool().submit(_run_flush_process, False)
+            return
+
+        # If user is still on the same page
         if task == "clean":
             if len(patches) > 0:
                 for x, y, p in patches: self.history.push_image_action(x, y, p)
@@ -335,9 +372,11 @@ class MainWindow(QMainWindow):
         self.run_thread("clean", self.canvas.cv_img, mask_gray, t_size)
 
     def run_thread(self, task, *args):
+        self.mark_current_touched() # mark immediately so it caches if we leave (will be reworked)
         self.setCursor(Qt.WaitCursor)
         self.worker_thread = QThread()
         self.worker = AIWorker(task, args)
+        self.worker.source_path = self.current_img_path
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.process)
         self.worker.progress.connect(self.progress_bar.setValue)
@@ -422,30 +461,62 @@ class MainWindow(QMainWindow):
     def on_open_folder(self):
         p = QFileDialog.getExistingDirectory(self, "Select Folder")
         if p:
+            self.image_sessions.clear()
+            self.page_states.clear()
             self.file_list.clear()
             for f in sorted(os.listdir(p)):
                 if f.lower().endswith(('.jpg','.jpeg','.png','.webp')):
-                    self.file_list.add_file(os.path.join(p, f))
+                    full_path = os.path.join(p, f)
+                    self.page_states[full_path] = PageState.UNTOUCHED
+                    self.file_list.add_file(full_path)
+
+    def mark_current_touched(self):
+        """Transitions the page state to TOUCHED via Enum"""
+        if self.current_img_path and not self.is_batching:
+            if self.page_states.get(self.current_img_path) != PageState.TOUCHED:
+                self.page_states[self.current_img_path] = PageState.TOUCHED
+                self.file_list.update_item_visuals(self.current_img_path, True)
 
     def on_file_clicked(self, it):
         path_real = it.data(Qt.UserRole)
-        self.current_img_path = path_real
-        img_data = np.fromfile(path_real, dtype=np.uint8)
-        img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+        if path_real == self.current_img_path: return # Don't reload if clicking the same file
 
-        if img is not None:
-            if len(img.shape) == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            elif len(img.shape) == 3 and img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-            else:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
-            self.history = HistoryManager(Config.MAX_HISTORY)
-            self.canvas.set_image(img)
+        # cache outgoing image (only if enum state says we touched it)
+        if self.current_img_path and self.canvas.cv_img is not None:
+            if self.page_states.get(self.current_img_path) == PageState.TOUCHED:
+                self.image_sessions[self.current_img_path] = {
+                    "img": self.canvas.cv_img.copy(),
+                    "mask": self.canvas.mask.copy(),
+                    "history": self.history
+                }
+
+        self.current_img_path = path_real
+
+        # restore incoming image (if we previously touched it)
+        if path_real in self.image_sessions:
+            session = self.image_sessions[path_real]
+            self.history = session["history"]
+            self.canvas.set_image(session["img"])
+            self.canvas.mask = session["mask"].copy()
+            self.canvas.update_mask_display()
         else:
-            QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
-            logger.error(f"Failed to decode image: {path_real}")
+            # load fresh from hard drive
+            img_data = np.fromfile(path_real, dtype=np.uint8)
+            img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+
+            if img is not None:
+                if len(img.shape) == 2:
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                elif len(img.shape) == 3 and img.shape[2] == 4:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                else:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                self.history = HistoryManager(Config.MAX_HISTORY)
+                self.canvas.set_image(img)
+            else:
+                QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
+                logger.error(f"Failed to decode image: {path_real}")
 
     def on_export(self, fmt):
         if self.canvas.cv_img is None: return
