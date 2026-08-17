@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
                              QMenu, QMessageBox, QGraphicsView, QProgressBar, QInputDialog,
-                             QDialog, QComboBox, QDialogButtonBox, QFormLayout)
+                             QDialog, QComboBox, QDialogButtonBox, QFormLayout, QCheckBox)
 from PySide6.QtGui import QShortcut, QKeySequence, QImage
 from PySide6.QtCore import Qt, QTimer, QThread
 from enum import Enum, auto
@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(f"{Config.APP_NAME} v{Config.VERSION}")
         self.resize(1500, 900)
-        
+
         self.monitor = SystemMonitor()
         self.history = HistoryManager(Config.MAX_HISTORY)
         self.batch_engine = BatchEngine()
@@ -120,15 +120,26 @@ class MainWindow(QMainWindow):
         self.lp = QFrame()
         self.lp.setObjectName("SidePanel")
         lp_lay = QVBoxLayout(self.lp)
+        
+        header_lay = QHBoxLayout()
+        self.chk_all = QCheckBox()
+        self.chk_all.toggled.connect(self.toggle_all_files)
+        lbl_assets = QLabel("PROJECT ASSETS")
+        lbl_assets.setStyleSheet("color: #888888; font-weight: bold;")
+        header_lay.addWidget(self.chk_all)
+        header_lay.addWidget(lbl_assets)
+        header_lay.addStretch()
+
         self.file_list = FileListWidget()
         self.file_list.itemClicked.connect(self.on_file_clicked)
         self.btn_batch = QPushButton("RUN BATCH PROCESS")
         self.btn_batch.setObjectName("ActionBtn")
         self.btn_batch.clicked.connect(self.on_start_batch)
-        lp_lay.addWidget(QLabel("PROJECT ASSETS"))
+        
+        lp_lay.addLayout(header_lay)
         lp_lay.addWidget(self.file_list)
         lp_lay.addWidget(self.btn_batch)
-        
+
         self.canvas = MangaCanvas()
         self.canvas.mask_changed.connect(lambda: self.history.push_mask_state(self.canvas.mask))
         self.canvas.mask_changed.connect(self.mark_current_touched)
@@ -250,6 +261,12 @@ class MainWindow(QMainWindow):
             else:
                 self.mode_lbl.setText("MODE: PAINTING")
                 self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
+
+    def toggle_all_files(self, checked):
+        """Checks or unchecks all files in the asset list"""
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self.file_list.count()):
+            self.file_list.item(i).setCheckState(state)
 
     #/////////////////////////////////#
     #      HISTORY OPERATIONS         #
@@ -462,7 +479,17 @@ class MainWindow(QMainWindow):
         scan_choice, fmt = dialog.get_results()
         self.batch_scan_type = "transparency" if scan_choice == "Transparency Scan" else "ocr"
 
-        paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
+        # Check if any specific files were checked in the UI
+        paths = []
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            if item.checkState() == Qt.Checked:
+                paths.append(item.data(Qt.UserRole))
+
+        # If absolutely no checkboxes are checked, default to ALL files
+        if not paths:
+            paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
+
         self.batch_engine.initialize_batch(paths, fmt)
         get_pool().submit(_run_flush_process, True).result()
         

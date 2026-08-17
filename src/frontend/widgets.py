@@ -16,6 +16,8 @@ class FileListWidget(QListWidget):
     def add_file(self, full_path: str):
         item = QListWidgetItem(os.path.basename(full_path))
         item.setData(Qt.UserRole, full_path)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Unchecked)
         self.addItem(item)
 
     def update_item_visuals(self, full_path: str, is_touched: bool):
