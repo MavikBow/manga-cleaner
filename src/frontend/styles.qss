@@ -128,3 +128,27 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     height: 0px;
     width: 0px;
 }
+/*/////////////////////////////////*/
+/*        CHECKBOX STYLING         */
+/*/////////////////////////////////*/
+
+QCheckBox, QListView {
+    outline: none;
+}
+
+QCheckBox::indicator, QListView::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #00d4ff;
+    border-radius: 3px;
+    background-color: #121217;
+}
+
+QCheckBox::indicator:hover, QListView::indicator:hover {
+    border: 1px solid #00d4ff;
+}
+
+QCheckBox::indicator:checked, QListView::indicator:checked {
+    background-color: #00d4ff;
+    border: 1px solid #00d4ff;
+}
