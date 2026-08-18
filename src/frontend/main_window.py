@@ -530,7 +530,10 @@ class MainWindow(QMainWindow):
             PhotopeaBridge.open_batch_in_photopea(self.batch_engine.files, self.batch_engine.output_dir)
         self.setCursor(Qt.ArrowCursor)
             
-        QMessageBox.information(self, "Batch Complete", f"Saved to: {self.batch_engine.output_dir}")
+        if self.batch_engine.export_format == "none":
+            QMessageBox.information(self, "Batch Complete", "All selected pages processed and updated in the studio memory.")
+        else:
+            QMessageBox.information(self, "Batch Complete", f"Saved to: {self.batch_engine.output_dir}")
 
     #/////////////////////////////////#
     #        FILE OPERATIONS          #
@@ -659,7 +662,7 @@ class BatchSetupDialog(QDialog):
         self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         self.export_fmt = QComboBox()
-        self.export_fmt.addItems(["jpg", "png", "photoshop", "photopea"])
+        self.export_fmt.addItems(["none", "png", "jpg", "photoshop", "photopea"])
         self.export_fmt.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

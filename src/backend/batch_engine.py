@@ -40,6 +40,11 @@ class BatchEngine(QObject):
         return None
 
     def save_current(self, cv_img):
+        if self.export_format.lower() == "none":
+            logger.info("[+] Page processed and kept in session memory.")
+            self.current_index += 1
+            return self.current_index >= len(self.files)
+
         ext = self.export_format if self.export_format not in ["photoshop", "photopea"] else "png"
         orig_name = os.path.splitext(os.path.basename(self.files[self.current_index]))[0]
         filename = f"{orig_name}_cleaned.{ext}"
