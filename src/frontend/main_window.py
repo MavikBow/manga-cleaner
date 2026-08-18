@@ -314,37 +314,35 @@ class MainWindow(QMainWindow):
     #/////////////////////////////////#
 
     def _check_lock_state(self):
-        """Locks the canvas if the current image is being processed OR in any queue"""
-        if not self.current_img_path:
-            self.canvas.set_locked(False)
-            return
-            
-        is_locked = False
+        """Identifies ALL files currently being processed or waiting and globally updates UI"""
+        locked_paths = set()
         
-        # 1. Check active background worker
+        # 1. Grab file currently running in AI worker thread
         if self.worker_thread is not None and hasattr(self, 'worker'):
-            if getattr(self.worker, 'source_path', None) == self.current_img_path:
-                is_locked = True
+            active_path = getattr(self.worker, 'source_path', None)
+            if active_path: locked_paths.add(active_path)
+            
+        # 2. Grab all manual/single-task queued files
+        for item in self.task_queue:
+            locked_paths.add(item["path"])
                 
-        # 2. Check pending single-task queue
-        if not is_locked:
-            for item in self.task_queue:
-                if item["path"] == self.current_img_path:
-                    is_locked = True
-                    break
-                    
-        # 3. Check pending batch queue
-        if not is_locked and self.is_batching:
-            if self.current_img_path in self.batch_engine.files:
-                try:
-                    idx = self.batch_engine.files.index(self.current_img_path)
-                    # If its index is equal to or greater than the current processed index, it's still waiting!
-                    if idx >= self.batch_engine.current_index:
-                        is_locked = True
-                except ValueError:
-                    pass
+        # 3. Grab all remaining files waiting in the Batch Engine queue
+        if self.is_batching:
+            for idx in range(self.batch_engine.current_index, len(self.batch_engine.files)):
+                locked_paths.add(self.batch_engine.files[idx])
 
-        self.canvas.set_locked(is_locked)
+        # 4. Globally update the FileList UI checkboxes and lock icons
+        for i in range(self.file_list.count()):
+            item = self.file_list.item(i)
+            file_path = item.data(Qt.UserRole)
+            is_locked = (file_path in locked_paths)
+            item.setData(Qt.UserRole + 2, is_locked) # Apply lock data to trigger icon repaint
+
+        # 5. Lock/Unlock the main interactive Canvas if we're looking at a locked file
+        if self.current_img_path:
+            self.canvas.set_locked(self.current_img_path in locked_paths)
+        else:
+            self.canvas.set_locked(False)
 
     def _update_queue_ui(self):
         """Updates the status label, global progress bar, and active lock states"""
@@ -663,8 +661,6 @@ class MainWindow(QMainWindow):
 
         # cache outgoing image 
         if self.current_img_path and self.canvas.cv_img is not None:
-            # We don't limit this cache to "MODIFIED" strictly, 
-            # because the user could have just panned/zoomed an UNMODIFIED image.
             self.image_sessions[self.current_img_path] = {
                 "img": self.canvas.cv_img.copy(),
                 "mask": self.canvas.mask.copy(),

@@ -1,7 +1,10 @@
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsEllipseItem
-from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath
+import os
+from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
+                             QGraphicsPathItem, QGraphicsEllipseItem, QLabel)
+from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 import numpy as np
+from src.utils.paths import Paths
 
 #/////////////////////////////////#
 #   MULTI-TOOL CANVAS ENGINE      #
@@ -52,18 +55,35 @@ class MangaCanvas(QGraphicsView):
         self.preview_item.setPen(QPen(QColor(0, 212, 255, 200), 2, Qt.DashLine))
         self.scene.addItem(self.preview_item)
 
+        # --- BIG CORNER LOCK OVERLAY ---
+        self.lock_overlay = QLabel(self)
+        lock_path = os.path.join(Paths.BASE_DIR, "assets", "icon_lock.svg")
+        if os.path.exists(lock_path):
+            self.lock_overlay.setPixmap(QIcon(lock_path).pixmap(48, 48))
+        self.lock_overlay.setStyleSheet("background: transparent;")
+        self.lock_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)  # Prevent blocking panning
+        self.lock_overlay.hide()
+
         self.cv_img = None
         self.mask = None
         self.setMouseTracking(True)
         self.update_cursor_visuals()
 
+    def resizeEvent(self, event):
+        """Keep the lock overlay perfectly positioned in the top right"""
+        super().resizeEvent(event)
+        self.lock_overlay.move(self.width() - self.lock_overlay.width() - 20, 20)
+
     def set_locked(self, locked: bool):
-        """Toggles the lock state and manages the visual cursor"""
+        """Toggles the lock state and manages the visual cursor & overlay"""
         self.is_locked = locked
         if locked:
             self.cursor_item.hide()
-        elif self.current_tool != "NONE":
-            self.cursor_item.show()
+            self.lock_overlay.show()
+        else:
+            self.lock_overlay.hide()
+            if self.current_tool != "NONE":
+                self.cursor_item.show()
 
     def drawBackground(self, painter, rect):
         painter.save()
