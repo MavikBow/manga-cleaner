@@ -1,32 +1,71 @@
 import os
+import PySide6.QtSvg  # Forces Qt to load the SVG image format plugin
 from PySide6.QtWidgets import (QListWidget, QListWidgetItem, QWidget, QVBoxLayout, 
-                             QPushButton, QLabel, QFrame, QSlider, QHBoxLayout)
-from PySide6.QtCore import Qt, Signal
+                             QPushButton, QLabel, QFrame, QSlider, QHBoxLayout,
+                             QStyledItemDelegate)
+from PySide6.QtCore import Qt, QRect
+from PySide6.QtGui import QIcon
 from src.utils.config import Config
+from src.utils.paths import Paths
 
 #/////////////////////////////////#
-#     STUDIO COMPONENT LIBRARY    #
+#    STUDIO COMPONENT LIBRARY     #
 #/////////////////////////////////#
+
+class FileListDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.icons = {}
+
+    def _get_icon(self, state_name: str) -> QIcon:
+        """Caches and returns the SVG icon for the given state"""
+        if state_name not in self.icons:
+            icon_path = os.path.join(Paths.BASE_DIR, "assets", f"icon_{state_name}.svg")
+            if os.path.exists(icon_path):
+                self.icons[state_name] = QIcon(icon_path)
+            else:
+                self.icons[state_name] = QIcon() # Fallback to prevent crash if SVG is missing
+        return self.icons[state_name]
+
+    def paint(self, painter, option, index):
+        # 1. Paint standard background, highlight, checkbox, and text
+        super().paint(painter, option, index)
+        
+        # 2. Extract our custom status flag from the item
+        state_name = index.data(Qt.UserRole + 1)
+        if state_name:
+            icon = self._get_icon(state_name)
+            if not icon.isNull():
+                icon_size = 18
+                
+                # 3. Calculate position: strict right align (stuck to the wall with tiny 4px gap)
+                x = option.rect.right() - icon_size - 4
+                y = option.rect.top() + (option.rect.height() - icon_size) // 2
+                rect = QRect(x, y, icon_size, icon_size)
+                
+                # 4. Draw icon strictly in Normal mode so selection highlight doesn't color-tint it!
+                icon.paint(painter, rect, Qt.AlignCenter, QIcon.Normal, QIcon.On)
 
 class FileListWidget(QListWidget):
     def __init__(self):
         super().__init__()
         self.setStyleSheet(f"background: {Config.COLOR_PANEL}; border: none;")
+        self.setItemDelegate(FileListDelegate(self))
 
     def add_file(self, full_path: str):
         item = QListWidgetItem(os.path.basename(full_path))
         item.setData(Qt.UserRole, full_path)
+        item.setData(Qt.UserRole + 1, "unmodified")  # Custom role for our delegate logic
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Unchecked)
         self.addItem(item)
 
-    def update_item_visuals(self, full_path: str, is_touched: bool):
-        """Updates the text prefix based on the Enum state from the main window"""
+    def update_item_state(self, full_path: str, state_name: str):
+        """Updates the background state for the delegate to redraw"""
         for i in range(self.count()):
             item = self.item(i)
             if item.data(Qt.UserRole) == full_path:
-                prefix = "*" if is_touched else ""
-                item.setText(f"{prefix}{os.path.basename(full_path)}")
+                item.setData(Qt.UserRole + 1, state_name)
                 break
 
 class ToolGroup(QFrame):

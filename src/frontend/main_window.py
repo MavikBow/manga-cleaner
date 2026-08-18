@@ -24,8 +24,11 @@ from src.backend.workers import AIWorker, get_pool, _run_flush_process
 #         PAGE STATE ENUM         #
 #/////////////////////////////////#
 class PageState(Enum):
-    UNTOUCHED = auto()
-    TOUCHED = auto()
+    UNMODIFIED = auto()
+    MODIFIED = auto()
+    WAITING = auto()
+    READY = auto()
+    ERROR = auto()
 
 #/////////////////////////////////#
 #     STUDIO MAIN CONTROLLER      #
@@ -141,7 +144,7 @@ class MainWindow(QMainWindow):
 
         self.canvas = MangaCanvas()
         self.canvas.mask_changed.connect(lambda: self.history.push_mask_state(self.canvas.mask))
-        self.canvas.mask_changed.connect(self.mark_current_touched)
+        self.canvas.mask_changed.connect(self.mark_current_modified)
         self.canvas.tool_state_updated.connect(self.on_eraser_toggle_ui)
         
         self.rp = QFrame()
@@ -275,7 +278,7 @@ class MainWindow(QMainWindow):
         res = self.history.pop_image_undo(self.canvas.cv_img)
         if res:
             x, y, p = res
-            self.mark_current_touched()
+            self.mark_current_modified()
             self.canvas.cv_img[y:y+p.shape[0], x:x+p.shape[1]] = p
             self.canvas.set_image(self.canvas.cv_img)
 
@@ -283,21 +286,21 @@ class MainWindow(QMainWindow):
         res = self.history.pop_image_redo(self.canvas.cv_img)
         if res:
             x, y, p = res
-            self.mark_current_touched()
+            self.mark_current_modified()
             self.canvas.cv_img[y:y+p.shape[0], x:x+p.shape[1]] = p
             self.canvas.set_image(self.canvas.cv_img)
 
     def on_undo_mask(self):
         res = self.history.pop_mask_undo(self.canvas.mask)
         if res:
-            self.mark_current_touched()
+            self.mark_current_modified()
             self.canvas.mask = res
             self.canvas.update_mask_display()
 
     def on_redo_mask(self):
         res = self.history.pop_mask_redo(self.canvas.mask)
         if res:
-            self.mark_current_touched()
+            self.mark_current_modified()
             self.canvas.mask = res
             self.canvas.update_mask_display()
 
@@ -350,10 +353,17 @@ class MainWindow(QMainWindow):
         item = self.task_queue.pop(0)
         self._update_queue_ui()
  
+        source_path = item["path"]
+        
+        # --- Update status to WAITING since AI is processing it now ---
+        self.page_states[source_path] = PageState.WAITING
+        self.file_list.update_item_state(source_path, "waiting")
+        # --------------------------------------------------------------
+
         self.setCursor(Qt.WaitCursor)
         self.worker_thread = QThread()
         self.worker = AIWorker(item["task"], item["args"])
-        self.worker.source_path = item["path"]
+        self.worker.source_path = source_path
 
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.process)
@@ -374,6 +384,11 @@ class MainWindow(QMainWindow):
         self._update_queue_ui()
 
     def on_task_error(self, message):
+        source_path = getattr(self.worker, 'source_path', None)
+        if source_path:
+            self.page_states[source_path] = PageState.ERROR
+            self.file_list.update_item_state(source_path, "error")
+
         self.stop_thread()
         self.is_batching = False
         self.task_queue.clear()
@@ -388,9 +403,11 @@ class MainWindow(QMainWindow):
         source_path = getattr(self.worker, 'source_path', self.current_img_path)
         is_active = (source_path == self.current_img_path)
 
-        if self.page_states.get(source_path) != PageState.TOUCHED:
-            self.page_states[source_path] = PageState.TOUCHED
-            self.file_list.update_item_visuals(source_path, True)
+        # --- Flag file accurately on completion ---
+        new_state = PageState.READY if task == "clean" else PageState.MODIFIED
+        self.page_states[source_path] = new_state
+        self.file_list.update_item_state(source_path, new_state.name.lower())
+        # ------------------------------------------
 
         if task == "clean":
             self.completed_lama_tasks += 1
@@ -440,12 +457,12 @@ class MainWindow(QMainWindow):
 
     def on_ocr_scan(self):
         if self.canvas.cv_img is None: return
-        self.mark_current_touched()
+        self.mark_current_modified()
         self.enqueue_task("ocr", self.current_img_path, self.canvas.cv_img.copy())
 
     def on_transparency_scan(self):
         if self.canvas.cv_img is None or not self.current_img_path: return
-        self.mark_current_touched()
+        self.mark_current_modified()
         self.enqueue_task("transparency", self.current_img_path, self.canvas.cv_img.copy())
 
     def on_lama_clean(self):
@@ -465,7 +482,7 @@ class MainWindow(QMainWindow):
 
         self.total_lama_tasks += 1
         t_size = self.t_slider.slider.value() * 512
-        self.mark_current_touched()
+        self.mark_current_modified()
         self.enqueue_task("clean", self.current_img_path, self.canvas.cv_img.copy(), mask_gray, t_size)
 
     #/////////////////////////////////#
@@ -521,7 +538,7 @@ class MainWindow(QMainWindow):
                     }
                     self.image_sessions[path]["mask"].fill(Qt.transparent)
 
-            # --- Fix: Check if this is the live active canvas ---
+            # --- Check if this is the live active canvas ---
             is_active = (path == self.current_img_path)
 
             # Send to queue based on scan mode
@@ -538,6 +555,11 @@ class MainWindow(QMainWindow):
                 if not np.any(mask_gray):
                     self.total_lama_tasks -= 1
                     self._update_queue_ui()
+                    
+                    # --- Mark successfully skipped page as READY ---
+                    self.page_states[path] = PageState.READY
+                    self.file_list.update_item_state(path, "ready")
+                    
                     is_last = self.batch_engine.save_current(img_cv)
                     if is_last: self.finalize_batch()
                     else: self.step_batch()
@@ -579,15 +601,15 @@ class MainWindow(QMainWindow):
             for f in sorted(os.listdir(p)):
                 if f.lower().endswith(('.jpg','.jpeg','.png','.webp')):
                     full_path = os.path.join(p, f)
-                    self.page_states[full_path] = PageState.UNTOUCHED
+                    self.page_states[full_path] = PageState.UNMODIFIED
                     self.file_list.add_file(full_path)
 
-    def mark_current_touched(self):
-        """Transitions the page state to TOUCHED via Enum"""
+    def mark_current_modified(self):
+        """Transitions the page state to MODIFIED via Enum"""
         if self.current_img_path and not self.is_batching:
-            if self.page_states.get(self.current_img_path) != PageState.TOUCHED:
-                self.page_states[self.current_img_path] = PageState.TOUCHED
-                self.file_list.update_item_visuals(self.current_img_path, True)
+            if self.page_states.get(self.current_img_path) != PageState.MODIFIED:
+                self.page_states[self.current_img_path] = PageState.MODIFIED
+                self.file_list.update_item_state(self.current_img_path, "modified")
 
     def on_file_clicked(self, it):
         path_real = it.data(Qt.UserRole)
@@ -595,12 +617,13 @@ class MainWindow(QMainWindow):
 
         # cache outgoing image 
         if self.current_img_path and self.canvas.cv_img is not None:
-            if self.page_states.get(self.current_img_path) == PageState.TOUCHED:
-                self.image_sessions[self.current_img_path] = {
-                    "img": self.canvas.cv_img.copy(),
-                    "mask": self.canvas.mask.copy(),
-                    "history": self.history
-                }
+            # We don't limit this cache to "MODIFIED" strictly, 
+            # because the user could have just panned/zoomed an UNMODIFIED image.
+            self.image_sessions[self.current_img_path] = {
+                "img": self.canvas.cv_img.copy(),
+                "mask": self.canvas.mask.copy(),
+                "history": self.history
+            }
 
         self.current_img_path = path_real
 
