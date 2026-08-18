@@ -1,4 +1,3 @@
-import onnxruntime as ort
 import numpy as np
 from src.utils.logger import logger
 
@@ -8,6 +7,8 @@ from src.utils.logger import logger
 
 class ONNXEngine:
     def __init__(self, model_path):
+        import onnxruntime as ort
+
         providers = ort.get_available_providers()
         
         sess_opt = ort.SessionOptions()

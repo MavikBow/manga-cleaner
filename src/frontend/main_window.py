@@ -15,7 +15,6 @@ from src.utils.system_info import SystemMonitor
 from src.utils.history import HistoryManager
 from src.utils.config import Config
 from src.utils.logger import logger
-from src.backend.workers import AIWorker
 from src.backend.photoshop import PhotoshopBridge
 from src.backend.photopea import PhotopeaBridge
 from src.backend.batch_engine import BatchEngine

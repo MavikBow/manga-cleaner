@@ -1,6 +1,5 @@
 import psutil
 import os
-import onnxruntime as ort
 
 #/////////////////////////////////#
 #     APP-SPECIFIC TELEMETRY      #
@@ -12,6 +11,8 @@ class SystemMonitor:
 
     def get_stats(self):
         """Returns (app_ram_mb, is_gpu_active)"""
+        import onnxruntime as ort
+
         ram_bytes = self.process.memory_info().rss
         ram_mb = int(ram_bytes / (1024 * 1024))
         
