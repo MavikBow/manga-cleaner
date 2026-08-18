@@ -388,6 +388,10 @@ class MainWindow(QMainWindow):
         source_path = getattr(self.worker, 'source_path', self.current_img_path)
         is_active = (source_path == self.current_img_path)
 
+        if self.page_states.get(source_path) != PageState.TOUCHED:
+            self.page_states[source_path] = PageState.TOUCHED
+            self.file_list.update_item_visuals(source_path, True)
+
         if task == "clean":
             self.completed_lama_tasks += 1
             target_history = self.history if is_active else self.image_sessions[source_path]["history"]
@@ -476,7 +480,9 @@ class MainWindow(QMainWindow):
             return
 
         scan_choice, fmt = dialog.get_results()
-        self.batch_scan_type = "transparency" if scan_choice == "Transparency Scan" else "ocr"
+        if scan_choice == "Transparency Scan": self.batch_scan_type = "transparency"
+        elif scan_choice == "Mask": self.batch_scan_type = "mask"
+        else: self.batch_scan_type = "ocr"
 
         # Check if any specific files were checked in the UI
         paths = []
@@ -500,24 +506,49 @@ class MainWindow(QMainWindow):
     def step_batch(self):
         path = self.batch_engine.get_next()
         if path:
-            img_data = np.fromfile(path, dtype=np.uint8)
-            img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
-            if img is not None:
-                if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                elif len(img.shape) == 3 and img.shape[2] == 4: img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-                else: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
-                self.image_sessions[path] = {
-                    "img": img.copy(),
-                    "mask": QImage(img.shape[1], img.shape[0], QImage.Format_ARGB32),
-                    "history": HistoryManager(Config.MAX_HISTORY)
-                }
-                self.image_sessions[path]["mask"].fill(Qt.transparent)
-                self.page_states[path] = PageState.TOUCHED
-                self.file_list.update_item_visuals(path, True)
-                
-                scan_task = "transparency" if self.batch_scan_type == "transparency" else "ocr"
-                self.enqueue_task(scan_task, path, img.copy())
+            if path not in self.image_sessions:
+                img_data = np.fromfile(path, dtype=np.uint8)
+                img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                    elif len(img.shape) == 3 and img.shape[2] == 4: img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                    else: img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+                    self.image_sessions[path] = {
+                        "img": img.copy(),
+                        "mask": QImage(img.shape[1], img.shape[0], QImage.Format_ARGB32),
+                        "history": HistoryManager(Config.MAX_HISTORY)
+                    }
+                    self.image_sessions[path]["mask"].fill(Qt.transparent)
+
+            # --- Fix: Check if this is the live active canvas ---
+            is_active = (path == self.current_img_path)
+
+            # Send to queue based on scan mode
+            if self.batch_scan_type == "mask":
+                # Pull from the live canvas if active, otherwise pull from cache
+                mask_q = self.canvas.mask if is_active else self.image_sessions[path]["mask"]
+                img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
+
+                ptr = mask_q.bits()
+                mask_np = np.frombuffer(ptr, np.uint8).reshape((mask_q.height(), mask_q.width(), 4))
+                mask_gray = mask_np[:, :, 3].copy()
+
+                # If using manual masks, skip straight to saving if the mask is empty
+                if not np.any(mask_gray):
+                    self.total_lama_tasks -= 1
+                    self._update_queue_ui()
+                    is_last = self.batch_engine.save_current(img_cv)
+                    if is_last: self.finalize_batch()
+                    else: self.step_batch()
+                    return
+
+                t_size = self.t_slider.slider.value() * 512
+                self.enqueue_task("clean", path, img_cv.copy(), mask_gray, t_size)
+            else:
+                # Also ensure OCR/Transparency uses live canvas if active
+                img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
+                self.enqueue_task(self.batch_scan_type, path, img_cv.copy())
 
     def finalize_batch(self):
         self.is_batching = False
@@ -658,7 +689,7 @@ class BatchSetupDialog(QDialog):
         self.setStyleSheet(f"background-color: {Config.COLOR_PANEL}; color: {Config.COLOR_TEXT};")
 
         self.scan_mode = QComboBox()
-        self.scan_mode.addItems(["OCR Scan", "Transparency Scan"])
+        self.scan_mode.addItems(["Mask", "OCR Scan", "Transparency Scan"])
         self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         self.export_fmt = QComboBox()
@@ -671,7 +702,7 @@ class BatchSetupDialog(QDialog):
         buttons.setStyleSheet(f"QPushButton {{ background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 6px; }}")
 
         layout = QFormLayout(self)
-        layout.addRow("Auto-Scan Mode:", self.scan_mode)
+        layout.addRow("Scan Mode:", self.scan_mode)
         layout.addRow("Export Format:", self.export_fmt)
         layout.addWidget(buttons)
 
