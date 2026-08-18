@@ -487,6 +487,7 @@ class MainWindow(QMainWindow):
 
         # If absolutely no checkboxes are checked, default to ALL files
         if not paths:
+            self.chk_all.setChecked(True)
             paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
 
         self.batch_engine.initialize_batch(paths, fmt)
