@@ -43,6 +43,7 @@ class MangaCanvas(QGraphicsView):
         self.brush_size = 40
         self.is_drawing = False
         self.is_eraser = False 
+        self.is_locked = False  
         
         self.last_pt = QPointF()
         self.start_pt = QPointF()
@@ -55,6 +56,14 @@ class MangaCanvas(QGraphicsView):
         self.mask = None
         self.setMouseTracking(True)
         self.update_cursor_visuals()
+
+    def set_locked(self, locked: bool):
+        """Toggles the lock state and manages the visual cursor"""
+        self.is_locked = locked
+        if locked:
+            self.cursor_item.hide()
+        elif self.current_tool != "NONE":
+            self.cursor_item.show()
 
     def drawBackground(self, painter, rect):
         painter.save()
@@ -112,8 +121,12 @@ class MangaCanvas(QGraphicsView):
         self.scale(zoom, zoom)
 
     def mousePressEvent(self, event):
+        # Always allow moving/panning regardless of lock state
         if self.current_tool == "NONE" or event.button() == Qt.RightButton:
             super().mousePressEvent(event)
+        elif self.is_locked:
+            # If the mask is locked by AI, silently reject all drawing inputs
+            return
         elif event.button() == Qt.LeftButton and self.mask:
             self.mask_changed.emit()
             self.is_drawing = True
@@ -184,6 +197,7 @@ class MangaCanvas(QGraphicsView):
             self.mask_item.setOpacity(opacity_percent / 100.0)
 
     def clear_mask(self):
+        if self.is_locked: return  # Block clearing if AI is working
         if self.mask:
             self.mask_changed.emit()
             self.mask.fill(Qt.transparent)

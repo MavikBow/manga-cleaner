@@ -31,7 +31,7 @@ class PageState(Enum):
     ERROR = auto()
 
 #/////////////////////////////////#
-#     STUDIO MAIN CONTROLLER      #
+#   STUDIO MAIN CONTROLLER        #
 #/////////////////////////////////#
 
 class MainWindow(QMainWindow):
@@ -251,7 +251,8 @@ class MainWindow(QMainWindow):
             
         else:
             self.canvas.setDragMode(QGraphicsView.NoDrag)
-            self.canvas.cursor_item.show()
+            if not self.canvas.is_locked:
+                self.canvas.cursor_item.show()
             
             mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO"}
             if tool in mapping: 
@@ -275,6 +276,7 @@ class MainWindow(QMainWindow):
     #/////////////////////////////////#
 
     def on_undo_image(self):
+        if self.canvas.is_locked: return
         res = self.history.pop_image_undo(self.canvas.cv_img)
         if res:
             x, y, p = res
@@ -283,6 +285,7 @@ class MainWindow(QMainWindow):
             self.canvas.set_image(self.canvas.cv_img)
 
     def on_redo_image(self):
+        if self.canvas.is_locked: return
         res = self.history.pop_image_redo(self.canvas.cv_img)
         if res:
             x, y, p = res
@@ -291,6 +294,7 @@ class MainWindow(QMainWindow):
             self.canvas.set_image(self.canvas.cv_img)
 
     def on_undo_mask(self):
+        if self.canvas.is_locked: return
         res = self.history.pop_mask_undo(self.canvas.mask)
         if res:
             self.mark_current_modified()
@@ -298,6 +302,7 @@ class MainWindow(QMainWindow):
             self.canvas.update_mask_display()
 
     def on_redo_mask(self):
+        if self.canvas.is_locked: return
         res = self.history.pop_mask_redo(self.canvas.mask)
         if res:
             self.mark_current_modified()
@@ -308,8 +313,41 @@ class MainWindow(QMainWindow):
     #      AI EXECUTION PIPELINE      #
     #/////////////////////////////////#
 
+    def _check_lock_state(self):
+        """Locks the canvas if the current image is being processed OR in any queue"""
+        if not self.current_img_path:
+            self.canvas.set_locked(False)
+            return
+            
+        is_locked = False
+        
+        # 1. Check active background worker
+        if self.worker_thread is not None and hasattr(self, 'worker'):
+            if getattr(self.worker, 'source_path', None) == self.current_img_path:
+                is_locked = True
+                
+        # 2. Check pending single-task queue
+        if not is_locked:
+            for item in self.task_queue:
+                if item["path"] == self.current_img_path:
+                    is_locked = True
+                    break
+                    
+        # 3. Check pending batch queue
+        if not is_locked and self.is_batching:
+            if self.current_img_path in self.batch_engine.files:
+                try:
+                    idx = self.batch_engine.files.index(self.current_img_path)
+                    # If its index is equal to or greater than the current processed index, it's still waiting!
+                    if idx >= self.batch_engine.current_index:
+                        is_locked = True
+                except ValueError:
+                    pass
+
+        self.canvas.set_locked(is_locked)
+
     def _update_queue_ui(self):
-        """Updates the status label and global progress bar"""
+        """Updates the status label, global progress bar, and active lock states"""
         pending = self.total_lama_tasks - self.completed_lama_tasks
         self.queue_lbl.setText(f"Processing / Queued: {pending}")
 
@@ -321,6 +359,8 @@ class MainWindow(QMainWindow):
             self.progress_bar.setVisible(False)
             self.total_lama_tasks = 0
             self.completed_lama_tasks = 0
+            
+        self._check_lock_state()
 
     def on_worker_progress(self, val):
         """Calculates fractional progress for smooth overall queue tracking"""
@@ -351,7 +391,6 @@ class MainWindow(QMainWindow):
             return
 
         item = self.task_queue.pop(0)
-        self._update_queue_ui()
  
         source_path = item["path"]
         
@@ -374,6 +413,9 @@ class MainWindow(QMainWindow):
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
 
         self.worker_thread.start()
+        
+        # Call this AFTER thread initialization to lock the canvas safely!
+        self._update_queue_ui() 
 
     def stop_thread(self):
         self.setCursor(Qt.ArrowCursor)
@@ -456,17 +498,17 @@ class MainWindow(QMainWindow):
         self._process_queue()
 
     def on_ocr_scan(self):
-        if self.canvas.cv_img is None: return
+        if self.canvas.cv_img is None or self.canvas.is_locked: return
         self.mark_current_modified()
         self.enqueue_task("ocr", self.current_img_path, self.canvas.cv_img.copy())
 
     def on_transparency_scan(self):
-        if self.canvas.cv_img is None or not self.current_img_path: return
+        if self.canvas.cv_img is None or not self.current_img_path or self.canvas.is_locked: return
         self.mark_current_modified()
         self.enqueue_task("transparency", self.current_img_path, self.canvas.cv_img.copy())
 
     def on_lama_clean(self):
-        if self.canvas.cv_img is None: return
+        if self.canvas.cv_img is None or self.canvas.is_locked: return
         ptr = self.canvas.mask.bits()
         mask_np = np.frombuffer(ptr, np.uint8).reshape((self.canvas.mask.height(), self.canvas.mask.width(), 4))
         mask_gray = mask_np[:, :, 3].copy()
@@ -519,6 +561,8 @@ class MainWindow(QMainWindow):
         self.is_batching = True
         self.total_lama_tasks += len(paths)
         self.step_batch()
+        
+        self._check_lock_state() # Lock UI instantly!
 
     def step_batch(self):
         path = self.batch_engine.get_next()
@@ -554,11 +598,12 @@ class MainWindow(QMainWindow):
                 # If using manual masks, skip straight to saving if the mask is empty
                 if not np.any(mask_gray):
                     self.total_lama_tasks -= 1
-                    self._update_queue_ui()
                     
                     # --- Mark successfully skipped page as READY ---
                     self.page_states[path] = PageState.READY
                     self.file_list.update_item_state(path, "ready")
+                    
+                    self._update_queue_ui()
                     
                     is_last = self.batch_engine.save_current(img_cv)
                     if is_last: self.finalize_batch()
@@ -575,6 +620,7 @@ class MainWindow(QMainWindow):
     def finalize_batch(self):
         self.is_batching = False
         get_pool().submit(_run_flush_process, False).result()
+        self._check_lock_state() # Unlock UI instantly!
         
         self.setCursor(Qt.WaitCursor)
         if self.batch_engine.export_format == "photoshop":
@@ -606,7 +652,7 @@ class MainWindow(QMainWindow):
 
     def mark_current_modified(self):
         """Transitions the page state to MODIFIED via Enum"""
-        if self.current_img_path and not self.is_batching:
+        if self.current_img_path:
             if self.page_states.get(self.current_img_path) != PageState.MODIFIED:
                 self.page_states[self.current_img_path] = PageState.MODIFIED
                 self.file_list.update_item_state(self.current_img_path, "modified")
@@ -656,6 +702,9 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.warning(self, "Load Error", f"The file is corrupted or cannot be processed:\n{os.path.basename(path_real)}")
                 logger.error(f"Failed to decode image: {path_real}")
+                
+        # --- Safely lock/unlock UI based on background state upon clicking ---
+        self._check_lock_state()
 
     def on_export(self, fmt):
         if self.canvas.cv_img is None: return

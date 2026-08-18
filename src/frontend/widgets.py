@@ -1,5 +1,5 @@
 import os
-import PySide6.QtSvg  # Forces Qt to load the SVG image format plugin
+import PySide6.QtSvg  # CRITICAL: Forces Qt to load the SVG image format plugin!
 from PySide6.QtWidgets import (QListWidget, QListWidgetItem, QWidget, QVBoxLayout, 
                              QPushButton, QLabel, QFrame, QSlider, QHBoxLayout,
                              QStyledItemDelegate)
