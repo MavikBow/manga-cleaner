@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
         self.batch_engine = BatchEngine()
         self.worker_thread = None
         self.is_batching = False
-        self.is_currently_erasing = False
+        self.is_alt_erasing = False # Tracks if we are temporarily holding Alt
         self.current_img_path = None
         self.batch_scan_type = "ocr"
         self.image_sessions = {}
@@ -145,7 +145,6 @@ class MainWindow(QMainWindow):
         self.canvas = MangaCanvas()
         self.canvas.mask_changed.connect(lambda: self.history.push_mask_state(self.canvas.mask))
         self.canvas.mask_changed.connect(self.mark_current_modified)
-        self.canvas.tool_state_updated.connect(self.on_eraser_toggle_ui)
         
         self.rp = QFrame()
         self.rp.setObjectName("SidePanel")
@@ -208,6 +207,7 @@ class MainWindow(QMainWindow):
 
     def setup_shortcuts(self):
         QShortcut(QKeySequence("B"), self).activated.connect(lambda: self.set_tool("BRUSH"))
+        QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.set_tool("ERASER"))
         QShortcut(QKeySequence("R"), self).activated.connect(lambda: self.set_tool("RECT"))
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
         QShortcut(QKeySequence("Space"), self).activated.connect(lambda: self.set_tool("NONE"))
@@ -222,25 +222,30 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_mask)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Shift:
-            self.canvas.toggle_eraser()
+        # Trigger Eraser temporarily if Alt is held down and we aren't auto-repeating the keypress
+        if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
+            if self.canvas.current_tool == "BRUSH":
+                self.is_alt_erasing = True
+                self.set_tool("ERASER")
         super().keyPressEvent(event)
 
-    def on_eraser_toggle_ui(self, is_eraser):
-        self.is_currently_erasing = is_eraser
-        
-        if is_eraser:
-            self.set_tool("ERASER")
-        else:
-            self.set_tool("BRUSH")
+    def keyReleaseEvent(self, event):
+        # Snap back to Brush when Alt is released
+        if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
+            if getattr(self, 'is_alt_erasing', False):
+                self.is_alt_erasing = False
+                # Double check the user hasn't explicitly clicked a different tool while holding Alt
+                if self.canvas.current_tool == "ERASER":
+                    self.set_tool("BRUSH")
+        super().keyReleaseEvent(event)
 
     def set_tool(self, tool):
-        if tool not in ["NONE", "ERASER"] and getattr(self, 'is_currently_erasing', False):
-            self.canvas.toggle_eraser()
-        
         self.canvas.current_tool = tool
         for btn in self.tools.buttons.values(): 
             btn.setChecked(False)
+        
+        # Ensure correct visual cursor state
+        self.canvas.update_cursor_visuals()
         
         if tool == "NONE":
             self.canvas.setDragMode(QGraphicsView.ScrollHandDrag)

@@ -12,7 +12,6 @@ from src.utils.paths import Paths
 
 class MangaCanvas(QGraphicsView):
     mask_changed = Signal()
-    tool_state_updated = Signal(bool)
 
     def __init__(self):
         super().__init__()
@@ -45,7 +44,6 @@ class MangaCanvas(QGraphicsView):
         self.current_tool = "NONE"
         self.brush_size = 40
         self.is_drawing = False
-        self.is_eraser = False 
         self.is_locked = False  
         
         self.last_pt = QPointF()
@@ -100,13 +98,8 @@ class MangaCanvas(QGraphicsView):
             painter.fillRect(self.viewport().rect(), self.backgroundBrush())
             painter.restore()
 
-    def toggle_eraser(self):
-        self.is_eraser = not self.is_eraser
-        self.update_cursor_visuals()
-        self.tool_state_updated.emit(self.is_eraser)
-
     def update_cursor_visuals(self):
-        if self.is_eraser or self.current_tool == "ERASER":
+        if self.current_tool == "ERASER":
             self.cursor_item.setPen(QPen(QColor(0, 212, 255, 200), 1))
             self.cursor_item.setBrush(QBrush(QColor(0, 212, 255, 60)))
         else:
@@ -154,7 +147,7 @@ class MangaCanvas(QGraphicsView):
             self.is_drawing = True
             curr_pt = self.mapToScene(event.pos())
             
-            is_brush_tool = self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser
+            is_brush_tool = self.current_tool in ["BRUSH", "ERASER"]
             
             # Photoshop Shift+Click Straight Line Feature
             if is_brush_tool and (event.modifiers() & Qt.ShiftModifier) and self.last_drawn_pt is not None:
@@ -176,7 +169,7 @@ class MangaCanvas(QGraphicsView):
         curr_pt = self.mapToScene(event.pos())
         self.cursor_item.setPos(curr_pt)
         if self.is_drawing:
-            if self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser:
+            if self.current_tool in ["BRUSH", "ERASER"]:
                 self.paint_mask_stroke(self.last_pt, curr_pt)
                 self.last_pt = curr_pt
                 self.last_drawn_pt = curr_pt
@@ -202,7 +195,7 @@ class MangaCanvas(QGraphicsView):
         painter = QPainter(self.mask)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        if self.current_tool == "ERASER" or self.is_eraser:
+        if self.current_tool == "ERASER":
             painter.setCompositionMode(QPainter.CompositionMode_Clear)
             color = Qt.transparent
         else:
