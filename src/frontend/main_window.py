@@ -214,6 +214,9 @@ class MainWindow(QMainWindow):
         split.setSizes([220, 1000, 240])
         main_lay.addWidget(split, 1)
 
+        # Ensure tools and cursors are perfectly synced at app launch!
+        self.set_tool("BRUSH")
+
     def setup_shortcuts(self):
         QShortcut(QKeySequence("B"), self).activated.connect(lambda: self.set_tool("BRUSH"))
         QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.set_tool("ERASER"))
@@ -290,11 +293,16 @@ class MainWindow(QMainWindow):
             self.canvas.setDragMode(QGraphicsView.NoDrag)
             
             if tool in ["BRUSH", "ERASER"]:
-                self.canvas.viewport().setCursor(Qt.BlankCursor) # Hide native system cursor
                 if not self.canvas.is_locked:
+                    self.canvas.viewport().setCursor(Qt.BlankCursor) # Hide native system cursor
                     self.canvas.cursor_item.show()
+                else:
+                    self.canvas.viewport().unsetCursor()
             else:
-                self.canvas.viewport().setCursor(Qt.CrossCursor) # Use crosshair for selection tools
+                if not self.canvas.is_locked:
+                    self.canvas.viewport().setCursor(Qt.CrossCursor) # Use crosshair for selection tools
+                else:
+                    self.canvas.viewport().unsetCursor()
                 self.canvas.cursor_item.hide()
             
             mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO"}

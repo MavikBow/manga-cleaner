@@ -85,10 +85,17 @@ class MangaCanvas(QGraphicsView):
         if locked:
             self.cursor_item.hide()
             self.lock_overlay.show()
+            self.viewport().unsetCursor() # Ensure native cursor is unhidden while locked
         else:
             self.lock_overlay.hide()
+            # Restore the proper cursor for whichever tool is currently equipped
             if self.current_tool in ["BRUSH", "ERASER"]:
+                self.viewport().setCursor(Qt.BlankCursor)
                 self.cursor_item.show()
+            elif self.current_tool in ["RECT", "LASSO"]:
+                self.viewport().setCursor(Qt.CrossCursor)
+            else:
+                self.viewport().unsetCursor()
 
     def drawBackground(self, painter, rect):
         painter.save()
