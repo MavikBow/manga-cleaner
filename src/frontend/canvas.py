@@ -1,7 +1,7 @@
 import os
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsPathItem, QGraphicsEllipseItem, QLabel)
-from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon
+from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon, QCursor
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 import numpy as np
 from src.utils.paths import Paths
@@ -12,6 +12,7 @@ from src.utils.paths import Paths
 
 class MangaCanvas(QGraphicsView):
     mask_changed = Signal()
+    brush_size_changed = Signal(int)
 
     def __init__(self):
         super().__init__()
@@ -48,6 +49,7 @@ class MangaCanvas(QGraphicsView):
         self.is_resizing_brush = False
         self.resize_start_pos = None
         self.resize_start_size = 40
+        self.resize_start_cursor_pos = None
         
         self.last_pt = QPointF()
         self.start_pt = QPointF()
@@ -113,8 +115,10 @@ class MangaCanvas(QGraphicsView):
         self.cursor_item.setRect(-r, -r, self.brush_size, self.brush_size)
 
     def set_brush_size(self, size):
-        self.brush_size = size
-        self.update_cursor_visuals()
+        if self.brush_size != size:
+            self.brush_size = size
+            self.update_cursor_visuals()
+            self.brush_size_changed.emit(self.brush_size)
 
     def set_image(self, cv_img):
         self.cv_img = cv_img
@@ -144,6 +148,7 @@ class MangaCanvas(QGraphicsView):
             self.is_resizing_brush = True
             self.resize_start_pos = event.pos()
             self.resize_start_size = self.brush_size
+            self.resize_start_cursor_pos = QCursor.pos() # Save global mouse position to teleport back
             event.accept()
             return
 
@@ -205,6 +210,8 @@ class MangaCanvas(QGraphicsView):
     def mouseReleaseEvent(self, event):
         if self.is_resizing_brush and event.button() == Qt.RightButton:
             self.is_resizing_brush = False
+            if self.resize_start_cursor_pos:
+                QCursor.setPos(self.resize_start_cursor_pos) # Teleport mouse back!
             event.accept()
             return
 

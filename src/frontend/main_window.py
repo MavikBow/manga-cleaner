@@ -171,6 +171,9 @@ class MainWindow(QMainWindow):
         self.o_slider = LabeledSlider("MASK OPACITY", 60, 0, 100, self.canvas.set_mask_opacity, suffix="%")
         self.t_slider = LabeledSlider("MAX TILE SIZE", 2048, 512, 4096, is_tile=True)
         
+        # Link dynamic canvas size updates to the sidebar slider UI
+        self.canvas.brush_size_changed.connect(self.b_slider.slider.setValue)
+        
         btn_scan = QPushButton("OCR SCAN [O]")
         btn_scan.setObjectName("ActionBtn")
         btn_scan.clicked.connect(self.on_ocr_scan)
