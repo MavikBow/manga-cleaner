@@ -31,8 +31,8 @@ class HelpSystem(QDialog):
             "<tr><td><b>Hold [Alt]</b></td><td><b>Erase Mode</b> (Quick-toggle for Brush, Rect, and Lasso)</td></tr>"
             "<tr><td><b>Hold [Space]</b></td><td><b>Quick Toggle</b> Pan/Move Image</td></tr>"
             "<tr><td><hr></td><td><hr></td></tr>"
-            "<tr><td><b>[Ctrl + Z]</b></td><td>Undo AI Clean (Image)</td></tr>"
-            "<tr><td><b>[Alt + Z]</b></td><td>Undo Manual Mask Painting</td></tr>"
+            "<tr><td><b>[Ctrl + Z]</b></td><td>Undo Manual Mask Painting</td></tr>"
+            "<tr><td><b>[Alt + Z]</b></td><td>Undo AI Clean (Image)</td></tr>"
             "</table>"
         )
         

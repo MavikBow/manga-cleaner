@@ -214,9 +214,6 @@ class MainWindow(QMainWindow):
         split.setSizes([220, 1000, 240])
         main_lay.addWidget(split, 1)
 
-        # Ensure tools and cursors are perfectly synced at app launch!
-        self.set_tool("BRUSH")
-
     def setup_shortcuts(self):
         QShortcut(QKeySequence("B"), self).activated.connect(lambda: self.set_tool("BRUSH"))
         QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.set_tool("ERASER"))
@@ -228,10 +225,10 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("T"), self).activated.connect(self.on_transparency_scan)
         QShortcut(QKeySequence("C"), self).activated.connect(self.on_lama_clean)
         
-        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.on_undo_image)
-        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.on_redo_image)
-        QShortcut(QKeySequence("Alt+Z"), self).activated.connect(self.on_undo_mask)
-        QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_mask)
+        QShortcut(QKeySequence("Alt+Z"), self).activated.connect(self.on_undo_image)
+        QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_image)
+        QShortcut(QKeySequence("Ctlr+Z"), self).activated.connect(self.on_undo_mask)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.on_redo_mask)
 
     def keyPressEvent(self, event):
         # Trigger inverse tool temporarily if Alt is held down
