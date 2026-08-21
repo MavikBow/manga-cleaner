@@ -568,6 +568,7 @@ class MainWindow(QMainWindow):
         scan_choice, fmt = dialog.get_results()
         if scan_choice == "Transparency Scan": self.batch_scan_type = "transparency"
         elif scan_choice == "Mask": self.batch_scan_type = "mask"
+        elif scan_choice == "none": self.batch_scan_type = "none"
         else: self.batch_scan_type = "ocr"
 
         # Check if any specific files were checked in the UI
@@ -613,7 +614,22 @@ class MainWindow(QMainWindow):
             is_active = (path == self.current_img_path)
 
             # Send to queue based on scan mode
-            if self.batch_scan_type == "mask":
+            if self.batch_scan_type == "none":
+                # Immediately save the current progress without queueing AI tasks
+                img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
+                self.total_lama_tasks -= 1
+                
+                self.page_states[path] = PageState.READY
+                self.file_list.update_item_state(path, "ready")
+                
+                self._update_queue_ui()
+                
+                is_last = self.batch_engine.save_current(img_cv)
+                if is_last: self.finalize_batch()
+                else: QTimer.singleShot(0, self.step_batch)
+                return
+                
+            elif self.batch_scan_type == "mask":
                 # Pull from the live canvas if active, otherwise pull from cache
                 mask_q = self.canvas.mask if is_active else self.image_sessions[path]["mask"]
                 img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
@@ -634,7 +650,7 @@ class MainWindow(QMainWindow):
                     
                     is_last = self.batch_engine.save_current(img_cv)
                     if is_last: self.finalize_batch()
-                    else: self.step_batch()
+                    else: QTimer.singleShot(0, self.step_batch)
                     return
 
                 t_size = self.t_slider.slider.value() * 512
@@ -786,7 +802,7 @@ class BatchSetupDialog(QDialog):
         self.setStyleSheet(f"background-color: {Config.COLOR_PANEL}; color: {Config.COLOR_TEXT};")
 
         self.scan_mode = QComboBox()
-        self.scan_mode.addItems(["Mask", "OCR Scan", "Transparency Scan"])
+        self.scan_mode.addItems(["none", "Mask", "OCR Scan", "Transparency Scan"])
         self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         self.export_fmt = QComboBox()
