@@ -50,6 +50,7 @@ wheels/
 *.spec
 !MangaCleaner_GPU.spec
 !MangaCleaner_CPU.spec
+!MangaCleaner_CPU_clean.spec
 
 # --- Compressed Archive Files ---
 *.rar
