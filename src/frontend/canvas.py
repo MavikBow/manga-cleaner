@@ -207,7 +207,10 @@ class MangaCanvas(QGraphicsView):
     def paint_mask_stroke(self, p1, p2):
         painter, color = self.get_painter()
         painter.setPen(QPen(color, self.brush_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawLine(p1, p2)
+        if p1 == p2:
+            painter.drawPoint(p1)
+        else:
+            painter.drawLine(p1, p2)
         painter.end()
         self.update_mask_display()
 
