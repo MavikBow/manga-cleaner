@@ -40,6 +40,7 @@ class MangaCanvas(QGraphicsView):
 
         self.cursor_item = QGraphicsEllipseItem()
         self.cursor_item.setZValue(1000)
+        self.cursor_item.hide() # Start hidden!
         self.scene.addItem(self.cursor_item)
 
         self.current_tool = "NONE"
