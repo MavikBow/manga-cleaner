@@ -139,8 +139,29 @@ class MangaCanvas(QGraphicsView):
         if self.mask: self.mask_item.setPixmap(QPixmap.fromImage(self.mask))
 
     def wheelEvent(self, event):
-        zoom = 1.25 if event.angleDelta().y() > 0 else 0.8
-        self.scale(zoom, zoom)
+        modifiers = event.modifiers()
+        
+        # Get the scroll delta (some OSs map Alt/Shift to horizontal X axis automatically)
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().x()
+            
+        if delta == 0:
+            return
+
+        if modifiers & Qt.AltModifier:
+            # Alt + Scroll = Zoom In/Out
+            zoom = 1.25 if delta > 0 else 0.8
+            self.scale(zoom, zoom)
+            event.accept()
+        elif modifiers & Qt.ShiftModifier:
+            # Shift + Scroll = Pan Left/Right
+            h_bar = self.horizontalScrollBar()
+            h_bar.setValue(h_bar.value() - delta)
+            event.accept()
+        else:
+            # Default Scroll = Pan Up/Down
+            super().wheelEvent(event)
 
     def mousePressEvent(self, event):
         # Dynamic Brush Resize: Alt + Right-Click Drag
