@@ -45,7 +45,12 @@ class MainWindow(QMainWindow):
         self.batch_engine = BatchEngine()
         self.worker_thread = None
         self.is_batching = False
-        self.is_alt_erasing = False # Tracks if we are temporarily holding Alt
+        
+        # Tool Toggle States
+        self.is_alt_erasing = False 
+        self.is_space_moving = False
+        self.pre_space_tool = "NONE"
+        
         self.current_img_path = None
         self.batch_scan_type = "ocr"
         self.image_sessions = {}
@@ -210,7 +215,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.set_tool("ERASER"))
         QShortcut(QKeySequence("R"), self).activated.connect(lambda: self.set_tool("RECT"))
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
-        QShortcut(QKeySequence("Space"), self).activated.connect(lambda: self.set_tool("NONE"))
+        QShortcut(QKeySequence("M"), self).activated.connect(lambda: self.set_tool("NONE"))
         
         QShortcut(QKeySequence("O"), self).activated.connect(self.on_ocr_scan)
         QShortcut(QKeySequence("T"), self).activated.connect(self.on_transparency_scan)
@@ -227,6 +232,14 @@ class MainWindow(QMainWindow):
             if self.canvas.current_tool == "BRUSH":
                 self.is_alt_erasing = True
                 self.set_tool("ERASER")
+                
+        # Trigger Move temporarily if Space is held down
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if not getattr(self, 'is_space_moving', False):
+                self.is_space_moving = True
+                self.pre_space_tool = self.canvas.current_tool
+                self.set_tool("NONE")
+                
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
@@ -237,6 +250,14 @@ class MainWindow(QMainWindow):
                 # Double check the user hasn't explicitly clicked a different tool while holding Alt
                 if self.canvas.current_tool == "ERASER":
                     self.set_tool("BRUSH")
+                    
+        # Snap back to previous tool when Space is released
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if getattr(self, 'is_space_moving', False):
+                self.is_space_moving = False
+                if self.canvas.current_tool == "NONE":
+                    self.set_tool(self.pre_space_tool)
+                    
         super().keyReleaseEvent(event)
 
     def set_tool(self, tool):
