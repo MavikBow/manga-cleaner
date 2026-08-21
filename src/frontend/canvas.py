@@ -62,7 +62,7 @@ class MangaCanvas(QGraphicsView):
 
         # --- BIG CORNER LOCK OVERLAY ---
         self.lock_overlay = QLabel(self)
-        lock_path = os.path.join(Paths.BASE_DIR, "assets", "icon_lock.svg")
+        lock_path = os.path.join(Paths.BUNDLE_DIR, "assets", "icon_lock.svg")
         if os.path.exists(lock_path):
             self.lock_overlay.setPixmap(QIcon(lock_path).pixmap(48, 48))
         self.lock_overlay.setStyleSheet("background: transparent;")

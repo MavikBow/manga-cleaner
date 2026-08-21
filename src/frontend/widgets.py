@@ -20,7 +20,7 @@ class FileListDelegate(QStyledItemDelegate):
     def _get_icon(self, state_name: str) -> QIcon:
         """Caches and returns the SVG icon for the given state"""
         if state_name not in self.icons:
-            icon_path = os.path.join(Paths.BASE_DIR, "assets", f"icon_{state_name}.svg")
+            icon_path = os.path.join(Paths.BUNDLE_DIR, "assets", f"icon_{state_name}.svg")
             if os.path.exists(icon_path):
                 self.icons[state_name] = QIcon(icon_path)
             else:
