@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         
         # Tool Toggle States
         self.is_alt_erasing = False 
+        self.is_alt_brushing = False 
         self.is_space_moving = False
         self.pre_space_tool = "NONE"
         
@@ -230,11 +231,14 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_mask)
 
     def keyPressEvent(self, event):
-        # Trigger Eraser temporarily if Alt is held down and we aren't auto-repeating the keypress
+        # Trigger inverse tool temporarily if Alt is held down
         if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
             if self.canvas.current_tool == "BRUSH":
                 self.is_alt_erasing = True
                 self.set_tool("ERASER")
+            elif self.canvas.current_tool == "ERASER":
+                self.is_alt_brushing = True
+                self.set_tool("BRUSH")
                 
         # Trigger Move temporarily if Space is held down
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
@@ -246,13 +250,16 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
-        # Snap back to Brush when Alt is released
+        # Snap back to opposite tool when Alt is released
         if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
             if getattr(self, 'is_alt_erasing', False):
                 self.is_alt_erasing = False
-                # Double check the user hasn't explicitly clicked a different tool while holding Alt
                 if self.canvas.current_tool == "ERASER":
                     self.set_tool("BRUSH")
+            elif getattr(self, 'is_alt_brushing', False):
+                self.is_alt_brushing = False
+                if self.canvas.current_tool == "BRUSH":
+                    self.set_tool("ERASER")
                     
         # Snap back to previous tool when Space is released
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
