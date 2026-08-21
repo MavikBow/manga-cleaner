@@ -50,6 +50,7 @@ class MangaCanvas(QGraphicsView):
         
         self.last_pt = QPointF()
         self.start_pt = QPointF()
+        self.last_drawn_pt = None # Remembers position for Shift+Click straight lines
         self.lasso_path = QPainterPath()
         self.preview_item = QGraphicsPathItem()
         self.preview_item.setPen(QPen(QColor(0, 212, 255, 200), 2, Qt.DashLine))
@@ -121,6 +122,7 @@ class MangaCanvas(QGraphicsView):
 
     def set_image(self, cv_img):
         self.cv_img = cv_img
+        self.last_drawn_pt = None # Reset straight line anchor on new image
         h, w = cv_img.shape[:2]
         # Support RGBA rendering if transparency is present
         if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
@@ -150,9 +152,25 @@ class MangaCanvas(QGraphicsView):
         elif event.button() == Qt.LeftButton and self.mask:
             self.mask_changed.emit()
             self.is_drawing = True
-            self.start_pt = self.mapToScene(event.pos())
-            self.last_pt = self.start_pt
-            if self.current_tool == "LASSO": self.lasso_path = QPainterPath(self.start_pt)
+            curr_pt = self.mapToScene(event.pos())
+            
+            is_brush_tool = self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser
+            
+            # Photoshop Shift+Click Straight Line Feature
+            if is_brush_tool and (event.modifiers() & Qt.ShiftModifier) and self.last_drawn_pt is not None:
+                self.paint_mask_stroke(self.last_drawn_pt, curr_pt)
+                self.last_pt = curr_pt
+                self.last_drawn_pt = curr_pt
+            else:
+                self.start_pt = curr_pt
+                self.last_pt = curr_pt
+                
+                if self.current_tool == "LASSO": 
+                    self.lasso_path = QPainterPath(self.start_pt)
+                elif is_brush_tool:
+                    # Instantly paint a dot on a single click without needing to move
+                    self.paint_mask_stroke(curr_pt, curr_pt)
+                    self.last_drawn_pt = curr_pt
 
     def mouseMoveEvent(self, event):
         curr_pt = self.mapToScene(event.pos())
@@ -161,6 +179,7 @@ class MangaCanvas(QGraphicsView):
             if self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser:
                 self.paint_mask_stroke(self.last_pt, curr_pt)
                 self.last_pt = curr_pt
+                self.last_drawn_pt = curr_pt
             elif self.current_tool == "RECT":
                 path = QPainterPath()
                 path.addRect(QRectF(self.start_pt, curr_pt).normalized())
@@ -222,3 +241,4 @@ class MangaCanvas(QGraphicsView):
             self.mask_changed.emit()
             self.mask.fill(Qt.transparent)
             self.update_mask_display()
+            self.last_drawn_pt = None # Reset anchor when mask is explicitly cleared
