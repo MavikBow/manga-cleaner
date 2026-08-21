@@ -57,7 +57,7 @@ class MangaCanvas(QGraphicsView):
         self.last_drawn_pt = None # Remembers position for Shift+Click straight lines
         self.lasso_path = QPainterPath()
         self.preview_item = QGraphicsPathItem()
-        self.preview_item.setPen(QPen(QColor(0, 212, 255, 200), 2, Qt.DashLine))
+        self.preview_item.setPen(QPen(QColor(255, 0, 0, 200), 2, Qt.DashLine)) # Default to Red (Adding)
         self.scene.addItem(self.preview_item)
 
         # --- BIG CORNER LOCK OVERLAY ---
@@ -220,13 +220,19 @@ class MangaCanvas(QGraphicsView):
                 self.paint_mask_stroke(self.last_pt, curr_pt)
                 self.last_pt = curr_pt
                 self.last_drawn_pt = curr_pt
-            elif self.current_tool == "RECT":
-                path = QPainterPath()
-                path.addRect(QRectF(self.start_pt, curr_pt).normalized())
-                self.preview_item.setPath(path)
-            elif self.current_tool == "LASSO":
-                self.lasso_path.lineTo(curr_pt)
-                self.preview_item.setPath(self.lasso_path)
+            elif self.current_tool in ["RECT", "LASSO"]:
+                # Dynamically change preview color if Alt is held down!
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                p_color = QColor(0, 212, 255, 200) if is_erasing else QColor(255, 0, 0, 200)
+                self.preview_item.setPen(QPen(p_color, 2, Qt.DashLine))
+
+                if self.current_tool == "RECT":
+                    path = QPainterPath()
+                    path.addRect(QRectF(self.start_pt, curr_pt).normalized())
+                    self.preview_item.setPath(path)
+                elif self.current_tool == "LASSO":
+                    self.lasso_path.lineTo(curr_pt)
+                    self.preview_item.setPath(self.lasso_path)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -239,17 +245,18 @@ class MangaCanvas(QGraphicsView):
 
         if self.is_drawing:
             curr_pt = self.mapToScene(event.pos())
-            if self.current_tool == "RECT": self.paint_mask_rect(self.start_pt, curr_pt)
-            elif self.current_tool == "LASSO": self.paint_mask_lasso()
+            is_erasing = bool(event.modifiers() & Qt.AltModifier)
+            if self.current_tool == "RECT": self.paint_mask_rect(self.start_pt, curr_pt, is_erasing)
+            elif self.current_tool == "LASSO": self.paint_mask_lasso(is_erasing)
             self.is_drawing = False
             self.preview_item.setPath(QPainterPath())
         super().mouseReleaseEvent(event)
 
-    def get_painter(self):
+    def get_painter(self, force_erase=False):
         painter = QPainter(self.mask)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        if self.current_tool == "ERASER":
+        if self.current_tool == "ERASER" or force_erase:
             painter.setCompositionMode(QPainter.CompositionMode_Clear)
             color = Qt.transparent
         else:
@@ -268,14 +275,14 @@ class MangaCanvas(QGraphicsView):
         painter.end()
         self.update_mask_display()
 
-    def paint_mask_rect(self, p1, p2):
-        painter, color = self.get_painter()
+    def paint_mask_rect(self, p1, p2, is_erasing=False):
+        painter, color = self.get_painter(is_erasing)
         painter.fillRect(QRectF(p1, p2).normalized(), QBrush(color))
         painter.end()
         self.update_mask_display()
 
-    def paint_mask_lasso(self):
-        painter, color = self.get_painter()
+    def paint_mask_lasso(self, is_erasing=False):
+        painter, color = self.get_painter(is_erasing)
         painter.fillPath(self.lasso_path, QBrush(color))
         painter.end()
         self.update_mask_display()
