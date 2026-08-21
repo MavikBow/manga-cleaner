@@ -27,6 +27,7 @@ class HelpSystem(QDialog):
             "<tr><td><b>[B] / [E] / [M]</b></td><td>Brush / Eraser / Move Tools</td></tr>"
             "<tr><td><b>[R] / [L]</b></td><td>Rect / Lasso Tools</td></tr>"
             "<tr><td><b>[Shift] + Click</b></td><td>Draw straight line between points</td></tr>"
+            "<tr><td><b>Alt + Right-Click Drag</b></td><td><b>Dynamically Resize Brush</b> (Left: Smaller, Right: Bigger)</td></tr>"
             "<tr><td><b>Hold [Alt]</b></td><td><b>Quick Toggle</b> Eraser (when using Brush)</td></tr>"
             "<tr><td><b>Hold [Space]</b></td><td><b>Quick Toggle</b> Pan/Move Image</td></tr>"
             "<tr><td><hr></td><td><hr></td></tr>"

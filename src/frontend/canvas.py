@@ -45,6 +45,9 @@ class MangaCanvas(QGraphicsView):
         self.brush_size = 40
         self.is_drawing = False
         self.is_locked = False  
+        self.is_resizing_brush = False
+        self.resize_start_pos = None
+        self.resize_start_size = 40
         
         self.last_pt = QPointF()
         self.start_pt = QPointF()
@@ -136,6 +139,14 @@ class MangaCanvas(QGraphicsView):
         self.scale(zoom, zoom)
 
     def mousePressEvent(self, event):
+        # Dynamic Brush Resize: Alt + Right-Click Drag
+        if (event.modifiers() & Qt.AltModifier) and event.button() == Qt.RightButton and self.current_tool in ["BRUSH", "ERASER"]:
+            self.is_resizing_brush = True
+            self.resize_start_pos = event.pos()
+            self.resize_start_size = self.brush_size
+            event.accept()
+            return
+
         # Always allow moving/panning regardless of lock state
         if self.current_tool == "NONE" or event.button() == Qt.RightButton:
             super().mousePressEvent(event)
@@ -166,6 +177,15 @@ class MangaCanvas(QGraphicsView):
                     self.last_drawn_pt = curr_pt
 
     def mouseMoveEvent(self, event):
+        # Handle dynamic brush resizing motion
+        if self.is_resizing_brush:
+            delta_x = event.pos().x() - self.resize_start_pos.x()
+            new_size = int(self.resize_start_size + delta_x * 0.5) # Scale sensitivity factor
+            new_size = max(1, min(300, new_size)) # Clamp within slider limits (1 to 300)
+            self.set_brush_size(new_size)
+            event.accept()
+            return
+
         curr_pt = self.mapToScene(event.pos())
         self.cursor_item.setPos(curr_pt)
         if self.is_drawing:
@@ -183,6 +203,11 @@ class MangaCanvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self.is_resizing_brush and event.button() == Qt.RightButton:
+            self.is_resizing_brush = False
+            event.accept()
+            return
+
         if self.is_drawing:
             curr_pt = self.mapToScene(event.pos())
             if self.current_tool == "RECT": self.paint_mask_rect(self.start_pt, curr_pt)
