@@ -273,6 +273,7 @@ class MainWindow(QMainWindow):
         
         if tool == "NONE":
             self.canvas.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.canvas.viewport().unsetCursor() # Let ScrollHandDrag manage the open hand icon
             self.canvas.cursor_item.hide()
             self.tools.buttons["MOVE"].setChecked(True)
             self.mode_lbl.setText("MODE: MOVING")
@@ -280,8 +281,14 @@ class MainWindow(QMainWindow):
             
         else:
             self.canvas.setDragMode(QGraphicsView.NoDrag)
-            if not self.canvas.is_locked:
-                self.canvas.cursor_item.show()
+            
+            if tool in ["BRUSH", "ERASER"]:
+                self.canvas.viewport().setCursor(Qt.BlankCursor) # Hide native system cursor
+                if not self.canvas.is_locked:
+                    self.canvas.cursor_item.show()
+            else:
+                self.canvas.viewport().setCursor(Qt.CrossCursor) # Use crosshair for selection tools
+                self.canvas.cursor_item.hide()
             
             mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO"}
             if tool in mapping: 

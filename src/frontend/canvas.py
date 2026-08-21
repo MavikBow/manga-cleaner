@@ -86,7 +86,7 @@ class MangaCanvas(QGraphicsView):
             self.lock_overlay.show()
         else:
             self.lock_overlay.hide()
-            if self.current_tool != "NONE":
+            if self.current_tool in ["BRUSH", "ERASER"]:
                 self.cursor_item.show()
 
     def drawBackground(self, painter, rect):
