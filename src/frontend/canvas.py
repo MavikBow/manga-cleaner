@@ -162,22 +162,33 @@ class MangaCanvas(QGraphicsView):
         ptr = self.mask.bits()
         mask_np = np.frombuffer(ptr, np.uint8).reshape((h, w, 4)).copy()
         
-        # Isolate the alpha channel for processing
-        alpha = mask_np[:, :, 3]
-        ff_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        # The .copy() forces NumPy to create a strictly contiguous memory array
+        alpha = mask_np[:, :, 3].copy() 
         
         fill_val = 0 if is_erasing else 255
         target_val = int(alpha[y, x])
         
-        # Abort if the user clicks a pixel that is already at the target state
-        if (is_erasing and target_val == 0) or (not is_erasing and target_val == 255):
+        # Abort if the user clicks a pixel that is already exactly the target state
+        if target_val == fill_val:
             return
             
-        # FloodFill algorithm runs natively in C++.
-        # loDiff and upDiff set to 5 safely bridges slightly antialiased soft brush edges 
-        # without overflowing across the canvas. FIXED_RANGE ensures it strictly compares 
-        # to the seed pixel rather than crawling up neighbor gradients.
-        cv2.floodFill(alpha, ff_mask, (x, y), fill_val, loDiff=5, upDiff=5, flags=cv2.FLOODFILL_FIXED_RANGE)
+        # Create a strict boundary mask for cv2.floodFill (size h+2, w+2)
+        # OpenCV treats any non-zero pixel in this mask as an impassable wall.
+        ff_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        
+        if is_erasing:
+            # Erase mode: Wall is empty space. Flood across all semi-transparent pixels up to 0.
+            ff_mask[1:-1, 1:-1] = (alpha == 0).astype(np.uint8)
+        else:
+            # Fill mode: Wall is the solid core of the brush. Flood across everything up to 255.
+            ff_mask[1:-1, 1:-1] = (alpha == 255).astype(np.uint8)
+            
+        # Extreme tolerances (255) to ignore gradients, bounded entirely by our custom wall
+        flags = 4 | (255 << 8)
+        cv2.floodFill(alpha, ff_mask, (x, y), fill_val, loDiff=255, upDiff=255, flags=flags)
+        
+        # Safely map the contiguous block back into the RGBA matrix
+        mask_np[:, :, 3] = alpha
         
         if not is_erasing:
             # Color newly filled areas to the signature GUI Red
