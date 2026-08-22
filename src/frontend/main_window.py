@@ -167,13 +167,14 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold; font-size: 10px;")
         rp_lay.addWidget(self.mode_lbl)
         
-        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY", "CLEAR"])
+        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY", "BUCKET", "CLEAR"])
         self.tools.buttons["MOVE"].clicked.connect(lambda: self.set_tool("NONE"))
         self.tools.buttons["BRUSH"].clicked.connect(lambda: self.set_tool("BRUSH"))
         self.tools.buttons["ERASER"].clicked.connect(lambda: self.set_tool("ERASER"))
         self.tools.buttons["RECT"].clicked.connect(lambda: self.set_tool("RECT"))
         self.tools.buttons["LASSO"].clicked.connect(lambda: self.set_tool("LASSO"))
         self.tools.buttons["POLY"].clicked.connect(lambda: self.set_tool("POLY"))
+        self.tools.buttons["BUCKET"].clicked.connect(lambda: self.set_tool("BUCKET"))
         self.tools.buttons["CLEAR"].clicked.connect(self.canvas.clear_mask)
         
         self.b_slider = LabeledSlider("BRUSH SIZE", 40, 1, 300, self.canvas.set_brush_size)
@@ -228,6 +229,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("R"), self).activated.connect(lambda: self.set_tool("RECT"))
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
         QShortcut(QKeySequence("P"), self).activated.connect(lambda: self.set_tool("POLY"))
+        QShortcut(QKeySequence("G"), self).activated.connect(lambda: self.set_tool("BUCKET"))
         QShortcut(QKeySequence("M"), self).activated.connect(lambda: self.set_tool("NONE"))
         
         QShortcut(QKeySequence("O"), self).activated.connect(self.on_ocr_scan)
@@ -316,19 +318,22 @@ class MainWindow(QMainWindow):
                     self.canvas.viewport().unsetCursor()
                 self.canvas.cursor_item.hide()
             
-            mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO", "POLY": "POLY"}
+            mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO", "POLY": "POLY", "BUCKET": "BUCKET"}
             if tool in mapping: 
                 self.tools.buttons[mapping[tool]].setChecked(True)
             
             if tool == "ERASER":
                 self.mode_lbl.setText("MODE: ERASING")
                 self.mode_lbl.setStyleSheet("color: #00d4ff; font-weight: bold;")
+            elif tool == "BUCKET":
+                self.mode_lbl.setText("MODE: FILLING")
+                self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
             else:
                 self.mode_lbl.setText("MODE: PAINTING")
                 self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
 
     def toggle_all_files(self, checked):
-        """Checks or unchecks all files in the asset list"""
+        """Checks or unchecks all files in the list"""
         state = Qt.Checked if checked else Qt.Unchecked
         for i in range(self.file_list.count()):
             self.file_list.item(i).setCheckState(state)

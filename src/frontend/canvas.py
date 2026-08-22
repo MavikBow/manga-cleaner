@@ -1,4 +1,5 @@
 import os
+import cv2
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsPathItem, QGraphicsEllipseItem, QLabel)
 from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon, QCursor
@@ -93,7 +94,7 @@ class MangaCanvas(QGraphicsView):
             if self.current_tool in ["BRUSH", "ERASER"]:
                 self.viewport().setCursor(Qt.BlankCursor)
                 self.cursor_item.show()
-            elif self.current_tool in ["RECT", "LASSO", "POLY"]:
+            elif self.current_tool in ["RECT", "LASSO", "POLY", "BUCKET"]:
                 self.viewport().setCursor(Qt.CrossCursor)
             else:
                 self.viewport().unsetCursor()
@@ -150,6 +151,44 @@ class MangaCanvas(QGraphicsView):
     def update_mask_display(self):
         if self.mask: self.mask_item.setPixmap(QPixmap.fromImage(self.mask))
 
+    def apply_bucket_fill(self, pt, is_erasing):
+        x, y = int(pt.x()), int(pt.y())
+        h, w = self.mask.height(), self.mask.width()
+        
+        # Guard against clicks physically outside the image bounds
+        if not (0 <= x < w and 0 <= y < h): return
+        
+        # Read the raw 32-bit ARGB data and safely copy it into a NumPy array
+        ptr = self.mask.bits()
+        mask_np = np.frombuffer(ptr, np.uint8).reshape((h, w, 4)).copy()
+        
+        # Isolate the alpha channel for processing
+        alpha = mask_np[:, :, 3]
+        ff_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        
+        fill_val = 0 if is_erasing else 255
+        target_val = int(alpha[y, x])
+        
+        # Abort if the user clicks a pixel that is already at the target state
+        if (is_erasing and target_val == 0) or (not is_erasing and target_val == 255):
+            return
+            
+        # FloodFill algorithm runs natively in C++.
+        # loDiff and upDiff set to 5 safely bridges slightly antialiased soft brush edges 
+        # without overflowing across the canvas. FIXED_RANGE ensures it strictly compares 
+        # to the seed pixel rather than crawling up neighbor gradients.
+        cv2.floodFill(alpha, ff_mask, (x, y), fill_val, loDiff=5, upDiff=5, flags=cv2.FLOODFILL_FIXED_RANGE)
+        
+        if not is_erasing:
+            # Color newly filled areas to the signature GUI Red
+            mask_np[:, :, 0] = 0
+            mask_np[:, :, 1] = 0
+            mask_np[:, :, 2] = 255
+            
+        # Write back to QImage architecture
+        self.mask = QImage(mask_np.data, w, h, w * 4, QImage.Format_ARGB32).copy()
+        self.update_mask_display()
+
     def wheelEvent(self, event):
         modifiers = event.modifiers()
         
@@ -199,6 +238,13 @@ class MangaCanvas(QGraphicsView):
             
         elif event.button() == Qt.LeftButton and self.mask:
             curr_pt = self.mapToScene(event.pos())
+
+            # BUCKET TOOL LOGIC
+            if self.current_tool == "BUCKET":
+                self.mask_changed.emit()
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                self.apply_bucket_fill(curr_pt, is_erasing)
+                return
             
             # Single-click interaction exclusively for Poly selection construction
             if self.current_tool == "POLY":

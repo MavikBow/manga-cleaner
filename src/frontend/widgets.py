@@ -91,7 +91,7 @@ class ToolGroup(QFrame):
         lay.addWidget(lbl)
         
         self.buttons = {}
-        checkable = ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY"]
+        checkable = ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY", "BUCKET"]
         
         for name in button_configs:
             btn = QPushButton(name)
