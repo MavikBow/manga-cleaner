@@ -2,7 +2,7 @@ import os
 import PySide6.QtSvg 
 from PySide6.QtWidgets import (QListWidget, QListWidgetItem, QWidget, QVBoxLayout, 
                              QPushButton, QLabel, QFrame, QSlider, QHBoxLayout,
-                             QStyledItemDelegate)
+                             QStyledItemDelegate, QGridLayout)
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QIcon
 from src.utils.config import Config
@@ -82,24 +82,33 @@ class FileListWidget(QListWidget):
 class ToolGroup(QFrame):
     def __init__(self, title, button_configs):
         super().__init__()
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(5, 5, 5, 5)
-        lay.setSpacing(4)
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(5, 5, 5, 5)
+        main_lay.setSpacing(4)
         
         lbl = QLabel(title.upper())
         lbl.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 9px; font-weight: bold;")
-        lay.addWidget(lbl)
+        main_lay.addWidget(lbl)
+        
+        grid_lay = QGridLayout()
+        grid_lay.setSpacing(4)
         
         self.buttons = {}
         checkable = ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY", "BUCKET"]
         
-        for name in button_configs:
+        for i, name in enumerate(button_configs):
             btn = QPushButton(name)
             if name in checkable: 
                 btn.setCheckable(True)
                 btn.setAutoExclusive(True) 
             self.buttons[name] = btn
-            lay.addWidget(btn)
+            
+            # Map index to a 2-column grid (row = index // 2, col = index % 2)
+            row = i // 2
+            col = i % 2
+            grid_lay.addWidget(btn, row, col)
+            
+        main_lay.addLayout(grid_lay)
 
 class HardwareMonitor(QFrame):
     def __init__(self):
