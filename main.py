@@ -26,10 +26,11 @@ def qt_message_handler(mode, context, message):
 def main():
 
     # Taskbar Icon Fix for Windows
-    try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mangacleaner.app")
-    except Exception:
-        pass
+    if os.name == 'nt':
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mangacleaner.app")
+        except Exception:
+            pass
 
     # 0. Hidden Console Fix
     if sys.stdout is None:

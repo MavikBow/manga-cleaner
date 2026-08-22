@@ -2,7 +2,6 @@ import os
 import cv2
 import tempfile
 import numpy as np
-import winreg
 from src.utils.logger import logger
 
 #/////////////////////////////////#
@@ -12,8 +11,14 @@ from src.utils.logger import logger
 class PhotoshopBridge:
     @staticmethod
     def _get_photoshop_connection():
-        # Scans the Windows Registry for all PS versions and returns the first working COM object
+        if os.name != 'nt':
+            raise Exception("Photoshop Bridge is only available on Windows.")
+            
+        # Move Windows-only imports here to prevent Linux boot crashes
+        import winreg
         import win32com.client
+        
+        # Scans the Windows Registry for all PS versions and returns the first working COM object
         prog_ids = set()
         prog_ids.add("Photoshop.Application")
 

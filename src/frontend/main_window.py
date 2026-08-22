@@ -99,7 +99,14 @@ class MainWindow(QMainWindow):
         
         self.btn_editor = QPushButton("SEND TO EDITOR ▼")
         ed_menu = QMenu(self)
-        ed_menu.addAction("Adobe Photoshop").triggered.connect(lambda: self.on_editor_bridge("photoshop"))
+        
+        # Disable Photoshop Button Safely on Linux
+        ps_action = ed_menu.addAction("Adobe Photoshop")
+        ps_action.triggered.connect(lambda: self.on_editor_bridge("photoshop"))
+        if os.name != 'nt':
+            ps_action.setEnabled(False)
+            ps_action.setText("Adobe Photoshop")
+            
         ed_menu.addAction("Photopea (Web)").triggered.connect(lambda: self.on_editor_bridge("photopea"))
         self.btn_editor.setMenu(ed_menu)
         
