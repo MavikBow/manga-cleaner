@@ -56,6 +56,7 @@ class MangaCanvas(QGraphicsView):
         self.start_pt = QPointF()
         self.last_drawn_pt = None # Remembers position for Shift+Click straight lines
         self.lasso_path = QPainterPath()
+        self.poly_points = []
         self.preview_item = QGraphicsPathItem()
         self.preview_item.setPen(QPen(QColor(255, 0, 0, 200), 2, Qt.DashLine)) # Default to Red (Adding)
         self.scene.addItem(self.preview_item)
@@ -92,7 +93,7 @@ class MangaCanvas(QGraphicsView):
             if self.current_tool in ["BRUSH", "ERASER"]:
                 self.viewport().setCursor(Qt.BlankCursor)
                 self.cursor_item.show()
-            elif self.current_tool in ["RECT", "LASSO"]:
+            elif self.current_tool in ["RECT", "LASSO", "POLY"]:
                 self.viewport().setCursor(Qt.CrossCursor)
             else:
                 self.viewport().unsetCursor()
@@ -131,6 +132,9 @@ class MangaCanvas(QGraphicsView):
     def set_image(self, cv_img):
         self.cv_img = cv_img
         self.last_drawn_pt = None # Reset straight line anchor on new image
+        self.poly_points.clear()
+        self.preview_item.setPath(QPainterPath())
+        
         h, w = cv_img.shape[:2]
         # Support RGBA rendering if transparency is present
         if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
@@ -183,14 +187,30 @@ class MangaCanvas(QGraphicsView):
 
         # Always allow moving/panning regardless of lock state
         if self.current_tool == "NONE" or event.button() == Qt.RightButton:
+            if event.button() == Qt.RightButton and self.current_tool == "POLY":
+                # Right-click instantly cancels an active polygonal selection
+                self.poly_points.clear()
+                self.preview_item.setPath(QPainterPath())
             super().mousePressEvent(event)
+            
         elif self.is_locked:
             # If the mask is locked by AI, silently reject all drawing inputs
             return
+            
         elif event.button() == Qt.LeftButton and self.mask:
+            curr_pt = self.mapToScene(event.pos())
+            
+            # Single-click interaction exclusively for Poly selection construction
+            if self.current_tool == "POLY":
+                if not self.poly_points:
+                    self.mask_changed.emit() # Save state before we start adding nodes!
+                self.poly_points.append(curr_pt)
+                self.mouseMoveEvent(event) # Force preview update to snap visual line immediately
+                return
+            
+            # Standard drawing initializations
             self.mask_changed.emit()
             self.is_drawing = True
-            curr_pt = self.mapToScene(event.pos())
             
             is_brush_tool = self.current_tool in ["BRUSH", "ERASER"]
             
@@ -222,6 +242,20 @@ class MangaCanvas(QGraphicsView):
 
         curr_pt = self.mapToScene(event.pos())
         self.cursor_item.setPos(curr_pt)
+        
+        # Always update Polygonal preview line connecting to the cursor dynamically
+        if self.current_tool == "POLY" and self.poly_points:
+            is_erasing = bool(event.modifiers() & Qt.AltModifier)
+            p_color = QColor(0, 212, 255, 200) if is_erasing else QColor(255, 0, 0, 200)
+            self.preview_item.setPen(QPen(p_color, 2, Qt.DashLine))
+
+            path = QPainterPath()
+            path.moveTo(self.poly_points[0])
+            for pt in self.poly_points[1:]:
+                path.lineTo(pt)
+            path.lineTo(curr_pt) # Track cursor
+            self.preview_item.setPath(path)
+
         if self.is_drawing:
             if self.current_tool in ["BRUSH", "ERASER"]:
                 self.paint_mask_stroke(self.last_pt, curr_pt)
@@ -258,6 +292,27 @@ class MangaCanvas(QGraphicsView):
             self.is_drawing = False
             self.preview_item.setPath(QPainterPath())
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and self.current_tool == "POLY":
+            if len(self.poly_points) >= 3:
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                
+                path = QPainterPath()
+                path.moveTo(self.poly_points[0])
+                for pt in self.poly_points[1:]:
+                    path.lineTo(pt)
+                path.closeSubpath()
+                
+                painter, color = self.get_painter(is_erasing)
+                painter.fillPath(path, QBrush(color))
+                painter.end()
+                self.update_mask_display()
+                
+            self.poly_points.clear()
+            self.preview_item.setPath(QPainterPath())
+            return
+        super().mouseDoubleClickEvent(event)
 
     def get_painter(self, force_erase=False):
         painter = QPainter(self.mask)
@@ -301,6 +356,8 @@ class MangaCanvas(QGraphicsView):
 
     def clear_mask(self):
         if self.is_locked: return  # Block clearing if AI is working
+        self.poly_points.clear()
+        self.preview_item.setPath(QPainterPath())
         if self.mask:
             self.mask_changed.emit()
             self.mask.fill(Qt.transparent)
