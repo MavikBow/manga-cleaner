@@ -139,7 +139,7 @@ docker run --rm -v $(pwd):/workspace -w /workspace python:3.12-bookworm bash -c 
   source venv/bin/activate
   pip install -r requirements.txt pyinstaller
 
-  pyinstaller --clean MangaCleaner_CPU_linux.spec
+  pyinstaller --clean --noconfirm MangaCleaner_CPU_linux.spec
 
   chown -R $(id -u):$(id -g) dist/ build/
 "

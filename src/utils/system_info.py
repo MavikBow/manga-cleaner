@@ -24,6 +24,8 @@ class SystemMonitor:
     @staticmethod
     def get_detailed_specs():
         """Calculates requirements based on local hardware"""
+        import onnxruntime as ort
+
         total_ram = round(psutil.virtual_memory().total / (1024**3), 1)
         
         gpu_label = "CPU ONLY (Slow Mode)"
