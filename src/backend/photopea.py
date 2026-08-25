@@ -11,13 +11,34 @@ import shutil
 from src.utils.logger import logger
 
 #/////////////////////////////////#
-#      PHOTOPEA WEB API BRIDGE    #
+#     PHOTOPEA WEB API BRIDGE     #
 #/////////////////////////////////#
 
 class PhotopeaBridge:
     _httpd = None
     _port = 0
     _session_dir = os.path.join(tempfile.gettempdir(), "mc_photopea_session")
+
+    @staticmethod
+    def _safe_open_browser(url):
+        """
+        Safely opens the system browser by temporarily removing PyInstaller's 
+        poisoned LD_LIBRARY_PATH so the host's /bin/sh doesn't crash.
+        """
+        env_copy = os.environ.copy()
+        
+        # Restore original path if PyInstaller backed it up, otherwise just delete it
+        if 'LD_LIBRARY_PATH_ORIG' in os.environ:
+            os.environ['LD_LIBRARY_PATH'] = os.environ['LD_LIBRARY_PATH_ORIG']
+        elif 'LD_LIBRARY_PATH' in os.environ:
+            del os.environ['LD_LIBRARY_PATH']
+            
+        try:
+            webbrowser.open(url)
+        finally:
+            # Restore the poisoned PyInstaller environment so the rest of the app doesn't crash
+            os.environ.clear()
+            os.environ.update(env_copy)
 
     @staticmethod
     def _start_server():
@@ -133,7 +154,7 @@ class PhotopeaBridge:
             }
 
             encoded_json = urllib.parse.quote(json.dumps(payload))
-            webbrowser.open(f"https://www.photopea.com#{encoded_json}")
+            PhotopeaBridge._safe_open_browser(f"https://www.photopea.com#{encoded_json}")
             return "Success"
 
         except Exception as e:
@@ -175,7 +196,7 @@ class PhotopeaBridge:
             }
 
             encoded_json = urllib.parse.quote(json.dumps(payload))
-            webbrowser.open(f"https://www.photopea.com#{encoded_json}")
+            PhotopeaBridge._safe_open_browser(f"https://www.photopea.com#{encoded_json}")
             return True
 
         except Exception as e:

@@ -46,11 +46,6 @@ sdist/
 var/
 wheels/
 
-# --- Build Configuration ---
-*.spec
-!MangaCleaner_GPU.spec
-!MangaCleaner_CPU.spec
-
 # --- Compressed Archive Files ---
 *.rar
 *.zip

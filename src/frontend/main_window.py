@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
                              QMenu, QMessageBox, QGraphicsView, QProgressBar, QInputDialog,
                              QDialog, QComboBox, QDialogButtonBox, QFormLayout, QCheckBox)
-from PySide6.QtGui import QShortcut, QKeySequence, QImage
+from PySide6.QtGui import QShortcut, QKeySequence, QImage, QPainterPath
 from PySide6.QtCore import Qt, QTimer, QThread
 from enum import Enum, auto
 from src.frontend.widgets import FileListWidget, ToolGroup, LabeledSlider, HardwareMonitor
@@ -45,7 +45,13 @@ class MainWindow(QMainWindow):
         self.batch_engine = BatchEngine()
         self.worker_thread = None
         self.is_batching = False
-        self.is_currently_erasing = False
+        
+        # Tool Toggle States
+        self.is_alt_erasing = False 
+        self.is_alt_brushing = False 
+        self.is_space_moving = False
+        self.pre_space_tool = "NONE"
+        
         self.current_img_path = None
         self.batch_scan_type = "ocr"
         self.image_sessions = {}
@@ -93,7 +99,14 @@ class MainWindow(QMainWindow):
         
         self.btn_editor = QPushButton("SEND TO EDITOR ▼")
         ed_menu = QMenu(self)
-        ed_menu.addAction("Adobe Photoshop").triggered.connect(lambda: self.on_editor_bridge("photoshop"))
+        
+        # Disable Photoshop Button Safely on Linux
+        ps_action = ed_menu.addAction("Adobe Photoshop")
+        ps_action.triggered.connect(lambda: self.on_editor_bridge("photoshop"))
+        if os.name != 'nt':
+            ps_action.setEnabled(False)
+            ps_action.setText("Adobe Photoshop")
+            
         ed_menu.addAction("Photopea (Web)").triggered.connect(lambda: self.on_editor_bridge("photopea"))
         self.btn_editor.setMenu(ed_menu)
         
@@ -145,7 +158,6 @@ class MainWindow(QMainWindow):
         self.canvas = MangaCanvas()
         self.canvas.mask_changed.connect(lambda: self.history.push_mask_state(self.canvas.mask))
         self.canvas.mask_changed.connect(self.mark_current_modified)
-        self.canvas.tool_state_updated.connect(self.on_eraser_toggle_ui)
         
         self.rp = QFrame()
         self.rp.setObjectName("SidePanel")
@@ -155,17 +167,22 @@ class MainWindow(QMainWindow):
         self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold; font-size: 10px;")
         rp_lay.addWidget(self.mode_lbl)
         
-        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "CLEAR"])
+        self.tools = ToolGroup("Drawing Tools", ["MOVE", "BRUSH", "ERASER", "RECT", "LASSO", "POLY", "BUCKET", "CLEAR"])
         self.tools.buttons["MOVE"].clicked.connect(lambda: self.set_tool("NONE"))
         self.tools.buttons["BRUSH"].clicked.connect(lambda: self.set_tool("BRUSH"))
         self.tools.buttons["ERASER"].clicked.connect(lambda: self.set_tool("ERASER"))
         self.tools.buttons["RECT"].clicked.connect(lambda: self.set_tool("RECT"))
         self.tools.buttons["LASSO"].clicked.connect(lambda: self.set_tool("LASSO"))
+        self.tools.buttons["POLY"].clicked.connect(lambda: self.set_tool("POLY"))
+        self.tools.buttons["BUCKET"].clicked.connect(lambda: self.set_tool("BUCKET"))
         self.tools.buttons["CLEAR"].clicked.connect(self.canvas.clear_mask)
         
         self.b_slider = LabeledSlider("BRUSH SIZE", 40, 1, 300, self.canvas.set_brush_size)
         self.o_slider = LabeledSlider("MASK OPACITY", 60, 0, 100, self.canvas.set_mask_opacity, suffix="%")
         self.t_slider = LabeledSlider("MAX TILE SIZE", 2048, 512, 4096, is_tile=True)
+        
+        # Link dynamic canvas size updates to the sidebar slider UI
+        self.canvas.brush_size_changed.connect(self.b_slider.slider.setValue)
         
         btn_scan = QPushButton("OCR SCAN [O]")
         btn_scan.setObjectName("ActionBtn")
@@ -208,42 +225,78 @@ class MainWindow(QMainWindow):
 
     def setup_shortcuts(self):
         QShortcut(QKeySequence("B"), self).activated.connect(lambda: self.set_tool("BRUSH"))
+        QShortcut(QKeySequence("E"), self).activated.connect(lambda: self.set_tool("ERASER"))
         QShortcut(QKeySequence("R"), self).activated.connect(lambda: self.set_tool("RECT"))
         QShortcut(QKeySequence("L"), self).activated.connect(lambda: self.set_tool("LASSO"))
-        QShortcut(QKeySequence("Space"), self).activated.connect(lambda: self.set_tool("NONE"))
+        QShortcut(QKeySequence("P"), self).activated.connect(lambda: self.set_tool("POLY"))
+        QShortcut(QKeySequence("G"), self).activated.connect(lambda: self.set_tool("BUCKET"))
+        QShortcut(QKeySequence("M"), self).activated.connect(lambda: self.set_tool("NONE"))
         
         QShortcut(QKeySequence("O"), self).activated.connect(self.on_ocr_scan)
         QShortcut(QKeySequence("T"), self).activated.connect(self.on_transparency_scan)
         QShortcut(QKeySequence("C"), self).activated.connect(self.on_lama_clean)
         
-        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.on_undo_image)
-        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.on_redo_image)
-        QShortcut(QKeySequence("Alt+Z"), self).activated.connect(self.on_undo_mask)
-        QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_mask)
+        QShortcut(QKeySequence("Alt+Z"), self).activated.connect(self.on_undo_image)
+        QShortcut(QKeySequence("Alt+Shift+Z"), self).activated.connect(self.on_redo_image)
+        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.on_undo_mask)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self).activated.connect(self.on_redo_mask)
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Shift:
-            self.canvas.toggle_eraser()
+        # Trigger inverse tool temporarily if Alt is held down
+        if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
+            if self.canvas.current_tool == "BRUSH":
+                self.is_alt_erasing = True
+                self.set_tool("ERASER")
+            elif self.canvas.current_tool == "ERASER":
+                self.is_alt_brushing = True
+                self.set_tool("BRUSH")
+                
+        # Trigger Move temporarily if Space is held down
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if not getattr(self, 'is_space_moving', False):
+                self.is_space_moving = True
+                self.pre_space_tool = self.canvas.current_tool
+                self.set_tool("NONE")
+                
         super().keyPressEvent(event)
 
-    def on_eraser_toggle_ui(self, is_eraser):
-        self.is_currently_erasing = is_eraser
-        
-        if is_eraser:
-            self.set_tool("ERASER")
-        else:
-            self.set_tool("BRUSH")
+    def keyReleaseEvent(self, event):
+        # Snap back to opposite tool when Alt is released
+        if event.key() == Qt.Key_Alt and not event.isAutoRepeat():
+            if getattr(self, 'is_alt_erasing', False):
+                self.is_alt_erasing = False
+                if self.canvas.current_tool == "ERASER":
+                    self.set_tool("BRUSH")
+            elif getattr(self, 'is_alt_brushing', False):
+                self.is_alt_brushing = False
+                if self.canvas.current_tool == "BRUSH":
+                    self.set_tool("ERASER")
+                    
+        # Snap back to previous tool when Space is released
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if getattr(self, 'is_space_moving', False):
+                self.is_space_moving = False
+                if self.canvas.current_tool == "NONE":
+                    self.set_tool(self.pre_space_tool)
+                    
+        super().keyReleaseEvent(event)
 
     def set_tool(self, tool):
-        if tool not in ["NONE", "ERASER"] and getattr(self, 'is_currently_erasing', False):
-            self.canvas.toggle_eraser()
-        
+        # Prevent dangling poly lines if user swaps tools mid-selection
+        if self.canvas.current_tool == "POLY" and tool != "POLY":
+            self.canvas.poly_points.clear()
+            self.canvas.preview_item.setPath(QPainterPath())
+
         self.canvas.current_tool = tool
         for btn in self.tools.buttons.values(): 
             btn.setChecked(False)
         
+        # Ensure correct visual cursor state
+        self.canvas.update_cursor_visuals()
+        
         if tool == "NONE":
             self.canvas.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.canvas.viewport().unsetCursor() # Let ScrollHandDrag manage the open hand icon
             self.canvas.cursor_item.hide()
             self.tools.buttons["MOVE"].setChecked(True)
             self.mode_lbl.setText("MODE: MOVING")
@@ -251,22 +304,36 @@ class MainWindow(QMainWindow):
             
         else:
             self.canvas.setDragMode(QGraphicsView.NoDrag)
-            if not self.canvas.is_locked:
-                self.canvas.cursor_item.show()
             
-            mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO"}
+            if tool in ["BRUSH", "ERASER"]:
+                if not self.canvas.is_locked:
+                    self.canvas.viewport().setCursor(Qt.BlankCursor) # Hide native system cursor
+                    self.canvas.cursor_item.show()
+                else:
+                    self.canvas.viewport().unsetCursor()
+            else:
+                if not self.canvas.is_locked:
+                    self.canvas.viewport().setCursor(Qt.CrossCursor) # Use crosshair for selection tools
+                else:
+                    self.canvas.viewport().unsetCursor()
+                self.canvas.cursor_item.hide()
+            
+            mapping = {"BRUSH": "BRUSH", "ERASER": "ERASER", "RECT": "RECT", "LASSO": "LASSO", "POLY": "POLY", "BUCKET": "BUCKET"}
             if tool in mapping: 
                 self.tools.buttons[mapping[tool]].setChecked(True)
             
             if tool == "ERASER":
                 self.mode_lbl.setText("MODE: ERASING")
                 self.mode_lbl.setStyleSheet("color: #00d4ff; font-weight: bold;")
+            elif tool == "BUCKET":
+                self.mode_lbl.setText("MODE: FILLING")
+                self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
             else:
                 self.mode_lbl.setText("MODE: PAINTING")
                 self.mode_lbl.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold;")
 
     def toggle_all_files(self, checked):
-        """Checks or unchecks all files in the asset list"""
+        """Checks or unchecks all files in the list"""
         state = Qt.Checked if checked else Qt.Unchecked
         for i in range(self.file_list.count()):
             self.file_list.item(i).setCheckState(state)
@@ -539,6 +606,7 @@ class MainWindow(QMainWindow):
         scan_choice, fmt = dialog.get_results()
         if scan_choice == "Transparency Scan": self.batch_scan_type = "transparency"
         elif scan_choice == "Mask": self.batch_scan_type = "mask"
+        elif scan_choice == "none": self.batch_scan_type = "none"
         else: self.batch_scan_type = "ocr"
 
         # Check if any specific files were checked in the UI
@@ -584,7 +652,22 @@ class MainWindow(QMainWindow):
             is_active = (path == self.current_img_path)
 
             # Send to queue based on scan mode
-            if self.batch_scan_type == "mask":
+            if self.batch_scan_type == "none":
+                # Immediately save the current progress without queueing AI tasks
+                img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
+                self.total_lama_tasks -= 1
+                
+                self.page_states[path] = PageState.READY
+                self.file_list.update_item_state(path, "ready")
+                
+                self._update_queue_ui()
+                
+                is_last = self.batch_engine.save_current(img_cv)
+                if is_last: self.finalize_batch()
+                else: QTimer.singleShot(0, self.step_batch)
+                return
+                
+            elif self.batch_scan_type == "mask":
                 # Pull from the live canvas if active, otherwise pull from cache
                 mask_q = self.canvas.mask if is_active else self.image_sessions[path]["mask"]
                 img_cv = self.canvas.cv_img if is_active else self.image_sessions[path]["img"]
@@ -605,7 +688,7 @@ class MainWindow(QMainWindow):
                     
                     is_last = self.batch_engine.save_current(img_cv)
                     if is_last: self.finalize_batch()
-                    else: self.step_batch()
+                    else: QTimer.singleShot(0, self.step_batch)
                     return
 
                 t_size = self.t_slider.slider.value() * 512
@@ -757,7 +840,7 @@ class BatchSetupDialog(QDialog):
         self.setStyleSheet(f"background-color: {Config.COLOR_PANEL}; color: {Config.COLOR_TEXT};")
 
         self.scan_mode = QComboBox()
-        self.scan_mode.addItems(["Mask", "OCR Scan", "Transparency Scan"])
+        self.scan_mode.addItems(["none", "Mask", "OCR Scan", "Transparency Scan"])
         self.scan_mode.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a32; padding: 4px;")
 
         self.export_fmt = QComboBox()

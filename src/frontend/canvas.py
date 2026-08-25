@@ -1,7 +1,8 @@
 import os
+import cv2
 from PySide6.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, 
                              QGraphicsPathItem, QGraphicsEllipseItem, QLabel)
-from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon
+from PySide6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QBrush, QPainterPath, QIcon, QCursor
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 import numpy as np
 from src.utils.paths import Paths
@@ -12,7 +13,7 @@ from src.utils.paths import Paths
 
 class MangaCanvas(QGraphicsView):
     mask_changed = Signal()
-    tool_state_updated = Signal(bool)
+    brush_size_changed = Signal(int)
 
     def __init__(self):
         super().__init__()
@@ -40,24 +41,30 @@ class MangaCanvas(QGraphicsView):
 
         self.cursor_item = QGraphicsEllipseItem()
         self.cursor_item.setZValue(1000)
+        self.cursor_item.hide() # Start hidden!
         self.scene.addItem(self.cursor_item)
 
         self.current_tool = "NONE"
         self.brush_size = 40
         self.is_drawing = False
-        self.is_eraser = False 
         self.is_locked = False  
+        self.is_resizing_brush = False
+        self.resize_start_pos = None
+        self.resize_start_size = 40
+        self.resize_start_cursor_pos = None
         
         self.last_pt = QPointF()
         self.start_pt = QPointF()
+        self.last_drawn_pt = None # Remembers position for Shift+Click straight lines
         self.lasso_path = QPainterPath()
+        self.poly_points = []
         self.preview_item = QGraphicsPathItem()
-        self.preview_item.setPen(QPen(QColor(0, 212, 255, 200), 2, Qt.DashLine))
+        self.preview_item.setPen(QPen(QColor(255, 0, 0, 200), 2, Qt.DashLine)) # Default to Red (Adding)
         self.scene.addItem(self.preview_item)
 
         # --- BIG CORNER LOCK OVERLAY ---
         self.lock_overlay = QLabel(self)
-        lock_path = os.path.join(Paths.BASE_DIR, "assets", "icon_lock.svg")
+        lock_path = os.path.join(Paths.BUNDLE_DIR, "assets", "icon_lock.svg")
         if os.path.exists(lock_path):
             self.lock_overlay.setPixmap(QIcon(lock_path).pixmap(48, 48))
         self.lock_overlay.setStyleSheet("background: transparent;")
@@ -80,10 +87,17 @@ class MangaCanvas(QGraphicsView):
         if locked:
             self.cursor_item.hide()
             self.lock_overlay.show()
+            self.viewport().unsetCursor() # Ensure native cursor is unhidden while locked
         else:
             self.lock_overlay.hide()
-            if self.current_tool != "NONE":
+            # Restore the proper cursor for whichever tool is currently equipped
+            if self.current_tool in ["BRUSH", "ERASER"]:
+                self.viewport().setCursor(Qt.BlankCursor)
                 self.cursor_item.show()
+            elif self.current_tool in ["RECT", "LASSO", "POLY", "BUCKET"]:
+                self.viewport().setCursor(Qt.CrossCursor)
+            else:
+                self.viewport().unsetCursor()
 
     def drawBackground(self, painter, rect):
         painter.save()
@@ -99,13 +113,8 @@ class MangaCanvas(QGraphicsView):
             painter.fillRect(self.viewport().rect(), self.backgroundBrush())
             painter.restore()
 
-    def toggle_eraser(self):
-        self.is_eraser = not self.is_eraser
-        self.update_cursor_visuals()
-        self.tool_state_updated.emit(self.is_eraser)
-
     def update_cursor_visuals(self):
-        if self.is_eraser or self.current_tool == "ERASER":
+        if self.current_tool == "ERASER":
             self.cursor_item.setPen(QPen(QColor(0, 212, 255, 200), 1))
             self.cursor_item.setBrush(QBrush(QColor(0, 212, 255, 60)))
         else:
@@ -116,11 +125,17 @@ class MangaCanvas(QGraphicsView):
         self.cursor_item.setRect(-r, -r, self.brush_size, self.brush_size)
 
     def set_brush_size(self, size):
-        self.brush_size = size
-        self.update_cursor_visuals()
+        if self.brush_size != size:
+            self.brush_size = size
+            self.update_cursor_visuals()
+            self.brush_size_changed.emit(self.brush_size)
 
     def set_image(self, cv_img):
         self.cv_img = cv_img
+        self.last_drawn_pt = None # Reset straight line anchor on new image
+        self.poly_points.clear()
+        self.preview_item.setPath(QPainterPath())
+        
         h, w = cv_img.shape[:2]
         # Support RGBA rendering if transparency is present
         if len(cv_img.shape) == 3 and cv_img.shape[2] == 4:
@@ -136,54 +151,231 @@ class MangaCanvas(QGraphicsView):
     def update_mask_display(self):
         if self.mask: self.mask_item.setPixmap(QPixmap.fromImage(self.mask))
 
+    def apply_bucket_fill(self, pt, is_erasing):
+        x, y = int(pt.x()), int(pt.y())
+        h, w = self.mask.height(), self.mask.width()
+        
+        # Guard against clicks physically outside the image bounds
+        if not (0 <= x < w and 0 <= y < h): return
+        
+        # Read the raw 32-bit ARGB data and safely copy it into a NumPy array
+        ptr = self.mask.bits()
+        mask_np = np.frombuffer(ptr, np.uint8).reshape((h, w, 4)).copy()
+        
+        # The .copy() forces NumPy to create a strictly contiguous memory array
+        alpha = mask_np[:, :, 3].copy() 
+        
+        fill_val = 0 if is_erasing else 255
+        target_val = int(alpha[y, x])
+        
+        # Abort if the user clicks a pixel that is already exactly the target state
+        if target_val == fill_val:
+            return
+            
+        # Create a strict boundary mask for cv2.floodFill (size h+2, w+2)
+        # OpenCV treats any non-zero pixel in this mask as an impassable wall.
+        ff_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+        
+        if is_erasing:
+            # Erase mode: Wall is empty space. Flood across all semi-transparent pixels up to 0.
+            ff_mask[1:-1, 1:-1] = (alpha == 0).astype(np.uint8)
+        else:
+            # Fill mode: Wall is the solid core of the brush. Flood across everything up to 255.
+            ff_mask[1:-1, 1:-1] = (alpha == 255).astype(np.uint8)
+            
+        # Extreme tolerances (255) to ignore gradients, bounded entirely by our custom wall
+        flags = 4 | (255 << 8)
+        cv2.floodFill(alpha, ff_mask, (x, y), fill_val, loDiff=255, upDiff=255, flags=flags)
+        
+        # Safely map the contiguous block back into the RGBA matrix
+        mask_np[:, :, 3] = alpha
+        
+        if not is_erasing:
+            # Color newly filled areas to the signature GUI Red
+            mask_np[:, :, 0] = 0
+            mask_np[:, :, 1] = 0
+            mask_np[:, :, 2] = 255
+            
+        # Write back to QImage architecture
+        self.mask = QImage(mask_np.data, w, h, w * 4, QImage.Format_ARGB32).copy()
+        self.update_mask_display()
+
     def wheelEvent(self, event):
-        zoom = 1.25 if event.angleDelta().y() > 0 else 0.8
-        self.scale(zoom, zoom)
+        modifiers = event.modifiers()
+        
+        # Get the scroll delta (some OSs map Alt/Shift to horizontal X axis automatically)
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().x()
+            
+        if delta == 0:
+            return
+
+        if modifiers & Qt.AltModifier:
+            # Alt + Scroll = Zoom In/Out
+            zoom = 1.25 if delta > 0 else 0.8
+            self.scale(zoom, zoom)
+            event.accept()
+        elif modifiers & Qt.ShiftModifier:
+            # Shift + Scroll = Pan Left/Right
+            h_bar = self.horizontalScrollBar()
+            h_bar.setValue(h_bar.value() - delta)
+            event.accept()
+        else:
+            # Default Scroll = Pan Up/Down
+            super().wheelEvent(event)
 
     def mousePressEvent(self, event):
+        # Dynamic Brush Resize: Alt + Right-Click Drag
+        if (event.modifiers() & Qt.AltModifier) and event.button() == Qt.RightButton and self.current_tool in ["BRUSH", "ERASER"]:
+            self.is_resizing_brush = True
+            self.resize_start_pos = event.pos()
+            self.resize_start_size = self.brush_size
+            self.resize_start_cursor_pos = QCursor.pos() # Save global mouse position to teleport back
+            event.accept()
+            return
+
         # Always allow moving/panning regardless of lock state
         if self.current_tool == "NONE" or event.button() == Qt.RightButton:
+            if event.button() == Qt.RightButton and self.current_tool == "POLY":
+                # Right-click instantly cancels an active polygonal selection
+                self.poly_points.clear()
+                self.preview_item.setPath(QPainterPath())
             super().mousePressEvent(event)
+            
         elif self.is_locked:
             # If the mask is locked by AI, silently reject all drawing inputs
             return
+            
         elif event.button() == Qt.LeftButton and self.mask:
+            curr_pt = self.mapToScene(event.pos())
+
+            # BUCKET TOOL LOGIC
+            if self.current_tool == "BUCKET":
+                self.mask_changed.emit()
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                self.apply_bucket_fill(curr_pt, is_erasing)
+                return
+            
+            # Single-click interaction exclusively for Poly selection construction
+            if self.current_tool == "POLY":
+                if not self.poly_points:
+                    self.mask_changed.emit() # Save state before we start adding nodes!
+                self.poly_points.append(curr_pt)
+                self.mouseMoveEvent(event) # Force preview update to snap visual line immediately
+                return
+            
+            # Standard drawing initializations
             self.mask_changed.emit()
             self.is_drawing = True
-            self.start_pt = self.mapToScene(event.pos())
-            self.last_pt = self.start_pt
-            if self.current_tool == "LASSO": self.lasso_path = QPainterPath(self.start_pt)
+            
+            is_brush_tool = self.current_tool in ["BRUSH", "ERASER"]
+            
+            # Photoshop Shift+Click Straight Line Feature
+            if is_brush_tool and (event.modifiers() & Qt.ShiftModifier) and self.last_drawn_pt is not None:
+                self.paint_mask_stroke(self.last_drawn_pt, curr_pt)
+                self.last_pt = curr_pt
+                self.last_drawn_pt = curr_pt
+            else:
+                self.start_pt = curr_pt
+                self.last_pt = curr_pt
+                
+                if self.current_tool == "LASSO": 
+                    self.lasso_path = QPainterPath(self.start_pt)
+                elif is_brush_tool:
+                    # Instantly paint a dot on a single click without needing to move
+                    self.paint_mask_stroke(curr_pt, curr_pt)
+                    self.last_drawn_pt = curr_pt
 
     def mouseMoveEvent(self, event):
+        # Handle dynamic brush resizing motion
+        if self.is_resizing_brush:
+            delta_x = event.pos().x() - self.resize_start_pos.x()
+            new_size = int(self.resize_start_size + delta_x * 0.5) # Scale sensitivity factor
+            new_size = max(1, min(300, new_size)) # Clamp within slider limits (1 to 300)
+            self.set_brush_size(new_size)
+            event.accept()
+            return
+
         curr_pt = self.mapToScene(event.pos())
         self.cursor_item.setPos(curr_pt)
+        
+        # Always update Polygonal preview line connecting to the cursor dynamically
+        if self.current_tool == "POLY" and self.poly_points:
+            is_erasing = bool(event.modifiers() & Qt.AltModifier)
+            p_color = QColor(0, 212, 255, 200) if is_erasing else QColor(255, 0, 0, 200)
+            self.preview_item.setPen(QPen(p_color, 2, Qt.DashLine))
+
+            path = QPainterPath()
+            path.moveTo(self.poly_points[0])
+            for pt in self.poly_points[1:]:
+                path.lineTo(pt)
+            path.lineTo(curr_pt) # Track cursor
+            self.preview_item.setPath(path)
+
         if self.is_drawing:
-            if self.current_tool in ["BRUSH", "ERASER"] or self.is_eraser:
+            if self.current_tool in ["BRUSH", "ERASER"]:
                 self.paint_mask_stroke(self.last_pt, curr_pt)
                 self.last_pt = curr_pt
-            elif self.current_tool == "RECT":
-                path = QPainterPath()
-                path.addRect(QRectF(self.start_pt, curr_pt).normalized())
-                self.preview_item.setPath(path)
-            elif self.current_tool == "LASSO":
-                self.lasso_path.lineTo(curr_pt)
-                self.preview_item.setPath(self.lasso_path)
+                self.last_drawn_pt = curr_pt
+            elif self.current_tool in ["RECT", "LASSO"]:
+                # Dynamically change preview color if Alt is held down!
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                p_color = QColor(0, 212, 255, 200) if is_erasing else QColor(255, 0, 0, 200)
+                self.preview_item.setPen(QPen(p_color, 2, Qt.DashLine))
+
+                if self.current_tool == "RECT":
+                    path = QPainterPath()
+                    path.addRect(QRectF(self.start_pt, curr_pt).normalized())
+                    self.preview_item.setPath(path)
+                elif self.current_tool == "LASSO":
+                    self.lasso_path.lineTo(curr_pt)
+                    self.preview_item.setPath(self.lasso_path)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self.is_resizing_brush and event.button() == Qt.RightButton:
+            self.is_resizing_brush = False
+            if self.resize_start_cursor_pos:
+                QCursor.setPos(self.resize_start_cursor_pos) # Teleport mouse back!
+            event.accept()
+            return
+
         if self.is_drawing:
             curr_pt = self.mapToScene(event.pos())
-            if self.current_tool == "RECT": self.paint_mask_rect(self.start_pt, curr_pt)
-            elif self.current_tool == "LASSO": self.paint_mask_lasso()
+            is_erasing = bool(event.modifiers() & Qt.AltModifier)
+            if self.current_tool == "RECT": self.paint_mask_rect(self.start_pt, curr_pt, is_erasing)
+            elif self.current_tool == "LASSO": self.paint_mask_lasso(is_erasing)
             self.is_drawing = False
             self.preview_item.setPath(QPainterPath())
         super().mouseReleaseEvent(event)
 
-    def get_painter(self):
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and self.current_tool == "POLY":
+            if len(self.poly_points) >= 3:
+                is_erasing = bool(event.modifiers() & Qt.AltModifier)
+                
+                path = QPainterPath()
+                path.moveTo(self.poly_points[0])
+                for pt in self.poly_points[1:]:
+                    path.lineTo(pt)
+                path.closeSubpath()
+                
+                painter, color = self.get_painter(is_erasing)
+                painter.fillPath(path, QBrush(color))
+                painter.end()
+                self.update_mask_display()
+                
+            self.poly_points.clear()
+            self.preview_item.setPath(QPainterPath())
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def get_painter(self, force_erase=False):
         painter = QPainter(self.mask)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        if self.current_tool == "ERASER" or self.is_eraser:
+        if self.current_tool == "ERASER" or force_erase:
             painter.setCompositionMode(QPainter.CompositionMode_Clear)
             color = Qt.transparent
         else:
@@ -195,18 +387,21 @@ class MangaCanvas(QGraphicsView):
     def paint_mask_stroke(self, p1, p2):
         painter, color = self.get_painter()
         painter.setPen(QPen(color, self.brush_size, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
-        painter.drawLine(p1, p2)
+        if p1 == p2:
+            painter.drawPoint(p1)
+        else:
+            painter.drawLine(p1, p2)
         painter.end()
         self.update_mask_display()
 
-    def paint_mask_rect(self, p1, p2):
-        painter, color = self.get_painter()
+    def paint_mask_rect(self, p1, p2, is_erasing=False):
+        painter, color = self.get_painter(is_erasing)
         painter.fillRect(QRectF(p1, p2).normalized(), QBrush(color))
         painter.end()
         self.update_mask_display()
 
-    def paint_mask_lasso(self):
-        painter, color = self.get_painter()
+    def paint_mask_lasso(self, is_erasing=False):
+        painter, color = self.get_painter(is_erasing)
         painter.fillPath(self.lasso_path, QBrush(color))
         painter.end()
         self.update_mask_display()
@@ -218,7 +413,10 @@ class MangaCanvas(QGraphicsView):
 
     def clear_mask(self):
         if self.is_locked: return  # Block clearing if AI is working
+        self.poly_points.clear()
+        self.preview_item.setPath(QPainterPath())
         if self.mask:
             self.mask_changed.emit()
             self.mask.fill(Qt.transparent)
             self.update_mask_display()
+            self.last_drawn_pt = None # Reset anchor when mask is explicitly cleared
