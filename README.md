@@ -15,6 +15,12 @@ Building upon the modular "Studio" engine introduced in v3.0.0, **Manga Cleaner 
 
 ---
 
+## 🎓 Tutorial  
+
+[![Watch the video](https://img.youtube.com/vi/9psnwpJG3aE/hqdefault.jpg)](https://www.youtube.com/embed/9psnwpJG3aE)  
+
+---
+
 ## ✨ What's New in v3.2.0
 
 The evolution from v3.0.0 to v3.2.0 focuses heavily on giving you granular control over your masks and workflow:
@@ -32,7 +38,7 @@ The evolution from v3.0.0 to v3.2.0 focuses heavily on giving you granular contr
 ## 💎 Core Engine Features
 
 *   **Resolution-Invariant Tiling:** Our Dynamic ROI Engine utilizes "Snap-to-8" reflection padding to process ultra-high 4K+ resolutions without downscaling. The output remains 1:1 perfectly sharp with no Gaussian blurring at the seams.
-*   **Advanced AI Core:** High-frequency heatmap OCR for pinpoint text detection, paired with an ONNX-quantized LaMa core for ultra-fast, seamless inpainting.
+*   **Advanced AI Core:** High-frequency heatmap OCR for pinpoint text detection in Japanese, Korean, English and Chinese, paired with an ONNX-quantized LaMa core for ultra-fast, seamless inpainting.
 *   **Hardware Optimized:** The GPU package provides real-time cleaning for NVIDIA devices (~900MB), while the Ultra-Lite CPU edition (~260MB) is perfectly pruned for laptops and integrated graphics.
 
 ---
